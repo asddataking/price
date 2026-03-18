@@ -47,6 +47,42 @@ type NearbyPlace = {
   distanceMeters: number
 }
 
+type NearbyCategory = "all" | "gas" | "tobacco" | "liquor" | "grocery"
+
+function nearbyCategoryLabel(c: NearbyCategory) {
+  switch (c) {
+    case "gas":
+      return "Gas"
+    case "tobacco":
+      return "Tobacco"
+    case "liquor":
+      return "Liquor"
+    case "grocery":
+      return "Grocery"
+    default:
+      return "All"
+  }
+}
+
+function itemCategoryMatchesNearbyFilter(itemCategory: string | undefined, c: NearbyCategory) {
+  if (c === "all") return true
+  if (!itemCategory) return false
+
+  if (c === "gas") return itemCategory === "gas"
+  if (c === "tobacco") return itemCategory === "cigarettes"
+  if (c === "liquor") return itemCategory === "liquor"
+  if (c === "grocery") return itemCategory === "groceries"
+  return false
+}
+
+function googlePlaceTypesForNearbyFilter(c: NearbyCategory): string[] {
+  if (c === "all") return ["gas_station", "convenience_store", "liquor_store"]
+  if (c === "gas") return ["gas_station"]
+  if (c === "liquor") return ["liquor_store"]
+  // Tobacco + Grocery both live best under convenience_store coverage.
+  return ["convenience_store"]
+}
+
 function minutesAgo(ts: string) {
   const then = new Date(ts).getTime()
   const diffMs = Math.max(0, Date.now() - then)
@@ -102,6 +138,8 @@ export default function HomeFeed({ renderMode = "live", googleMapsKey }: HomeFee
   const [nearbyPlaces, setNearbyPlaces] = React.useState<NearbyPlace[]>([])
   const [nearbyPlacesLoading, setNearbyPlacesLoading] = React.useState(false)
   const [nearbyPlacesBucket, setNearbyPlacesBucket] = React.useState<string | null>(null)
+
+  const [nearbyCategory, setNearbyCategory] = React.useState<NearbyCategory>("all")
 
   React.useEffect(() => {
     let cancelled = false
@@ -277,7 +315,7 @@ export default function HomeFeed({ renderMode = "live", googleMapsKey }: HomeFee
     if (!isLive) return
     if (!userLocation) return
 
-    const bucketKey = `${userLocation.lat.toFixed(3)},${userLocation.lng.toFixed(3)}`
+    const bucketKey = `${userLocation.lat.toFixed(3)},${userLocation.lng.toFixed(3)}:${nearbyCategory}`
     if (nearbyPlacesBucket === bucketKey) return
 
     let cancelled = false
@@ -288,7 +326,7 @@ export default function HomeFeed({ renderMode = "live", googleMapsKey }: HomeFee
       try {
         const radiusMeters = 3000
 
-        const types: string[] = ["gas_station", "convenience_store", "liquor_store"]
+        const types = googlePlaceTypesForNearbyFilter(nearbyCategory)
 
         const responses = await Promise.all(
           types.map(async (type) => {
@@ -353,7 +391,7 @@ export default function HomeFeed({ renderMode = "live", googleMapsKey }: HomeFee
     return () => {
       cancelled = true
     }
-  }, [isLive, userLocation, nearbyPlacesBucket])
+  }, [isLive, userLocation, nearbyPlacesBucket, nearbyCategory])
 
   const userDistanceByStoreId = React.useMemo(() => {
     if (!userLocation) return {}
@@ -394,18 +432,22 @@ export default function HomeFeed({ renderMode = "live", googleMapsKey }: HomeFee
     for (const s of stores) {
       const cheapest = cheapestByStoreId[s.id]
       if (!cheapest) continue
+
+      const item = itemsById[cheapest.itemId]
+      if (!itemCategoryMatchesNearbyFilter(item?.category, nearbyCategory)) continue
+
       const distM = userDistanceByStoreId[s.id] ?? Infinity
       if (!best || distM < best.distanceMeters) {
         best = {
           store: s,
-          item: itemsById[cheapest.itemId],
+          item,
           price: cheapest.price,
           distanceMeters: distM,
         }
       }
     }
     return best
-  }, [stores, userLocation, cheapestByStoreId, itemsById, userDistanceByStoreId])
+  }, [stores, userLocation, cheapestByStoreId, itemsById, userDistanceByStoreId, nearbyCategory])
 
   const hotWins = React.useMemo(() => {
     if (!userLocation) return []
@@ -422,6 +464,7 @@ export default function HomeFeed({ renderMode = "live", googleMapsKey }: HomeFee
       const cheapest = cheapestByStoreId[s.id]
       if (!cheapest) continue
       const item = itemsById[cheapest.itemId]
+      if (!itemCategoryMatchesNearbyFilter(item?.category, nearbyCategory)) continue
       const distM = userDistanceByStoreId[s.id] ?? 0
       out.push({
         store: s,
@@ -437,7 +480,9 @@ export default function HomeFeed({ renderMode = "live", googleMapsKey }: HomeFee
     return out
       .sort((a, b) => a.price - b.price)
       .slice(0, 6)
-  }, [cheapestByStoreId, itemsById, stores, userDistanceByStoreId, userLocation])
+  }, [cheapestByStoreId, itemsById, stores, userDistanceByStoreId, userLocation, nearbyCategory])
+
+  const hotWinStoreIds = React.useMemo(() => new Set(hotWins.map((d) => d.store.id)), [hotWins])
 
   const storesSection = React.useMemo(() => {
     if (!userLocation) return []
@@ -558,6 +603,30 @@ export default function HomeFeed({ renderMode = "live", googleMapsKey }: HomeFee
             </Badge>
           </div>
 
+          {/* Nearby category filters (used for both deals + cached Google Places). */}
+          <div className="flex flex-wrap gap-2 px-4 pb-3">
+            {(
+              [
+                ["all", "All"],
+                ["gas", "Gas"],
+                ["tobacco", "Tobacco"],
+                ["liquor", "Liquor"],
+                ["grocery", "Grocery"],
+              ] as Array<[NearbyCategory, string]>
+            ).map(([key, label]) => (
+              <Button
+                key={key}
+                type="button"
+                variant={nearbyCategory === key ? "secondary" : "outline"}
+                className="h-8 rounded-xl px-3 text-[13px]"
+                onClick={() => setNearbyCategory(key)}
+                disabled={loading}
+              >
+                {label}
+              </Button>
+            ))}
+          </div>
+
           <div className="h-52 sm:h-56">
             {canRenderMap ? (
               <APIProvider apiKey={googleMapsKey ?? ""}>
@@ -570,33 +639,32 @@ export default function HomeFeed({ renderMode = "live", googleMapsKey }: HomeFee
                   mapId="pricedash-map"
                 >
                   {!loading && hotWins.length > 0
-                    ? stores.map((s) => {
-                        const cheapest = cheapestByStoreId[s.id]
-                        const hasPrice = typeof cheapest?.price === "number"
-                        const pinColor = hasPrice ? "#22c55e" : "#94a3b8"
-                        return (
-                          <AdvancedMarker
-                            key={s.id}
-                            position={{ lat: Number(s.lat), lng: Number(s.lng) }}
-                          >
-                            <div
-                              className="relative -translate-y-1 rounded-full ring-2 ring-white/80 shadow-md"
-                              style={{
-                                width: 34,
-                                height: 34,
-                                background: "rgba(0,0,0,0.25)",
-                                display: "grid",
-                                placeItems: "center",
-                              }}
-                            >
+                    ? stores
+                        .filter((s) => hotWinStoreIds.has(s.id))
+                        .map((s) => {
+                          const cheapest = cheapestByStoreId[s.id]
+                          const hasPrice = typeof cheapest?.price === "number"
+                          const pinColor = hasPrice ? "#22c55e" : "#94a3b8"
+                          return (
+                            <AdvancedMarker key={s.id} position={{ lat: Number(s.lat), lng: Number(s.lng) }}>
                               <div
-                                className="rounded-full"
-                                style={{ width: 14, height: 14, background: pinColor }}
-                              />
-                            </div>
-                          </AdvancedMarker>
-                        )
-                      })
+                                className="relative -translate-y-1 rounded-full ring-2 ring-white/80 shadow-md"
+                                style={{
+                                  width: 34,
+                                  height: 34,
+                                  background: "rgba(0,0,0,0.25)",
+                                  display: "grid",
+                                  placeItems: "center",
+                                }}
+                              >
+                                <div
+                                  className="rounded-full"
+                                  style={{ width: 14, height: 14, background: pinColor }}
+                                />
+                              </div>
+                            </AdvancedMarker>
+                          )
+                        })
                     : nearbyPlaces.map((p) => (
                         <AdvancedMarker key={p.id} position={{ lat: p.lat, lng: p.lng }}>
                           <div
@@ -653,12 +721,14 @@ export default function HomeFeed({ renderMode = "live", googleMapsKey }: HomeFee
             <div className="space-y-3">
               {hotWins.length === 0 ? (
                 <div className="rounded-xl border bg-card/60 p-4 text-sm text-muted-foreground">
-                  <div className="font-medium text-foreground">No verified deals yet.</div>
+                  <div className="font-medium text-foreground">
+                    No verified deals for {nearbyCategoryLabel(nearbyCategory)} yet.
+                  </div>
                   <div className="mt-1 text-xs text-muted-foreground">
                     {nearbyPlacesLoading
                       ? "Finding nearby places..."
                       : nearbyPlaces.length > 0
-                        ? "Here are real nearby places you can start reporting prices for."
+                        ? `Here are real nearby ${nearbyCategoryLabel(nearbyCategory)} places you can start reporting prices for.`
                         : "No cached places yet—try again in a moment."}
                   </div>
 

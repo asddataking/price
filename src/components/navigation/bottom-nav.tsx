@@ -38,13 +38,23 @@ export function BottomNav() {
               asChild
               variant="ghost"
               className={cn(
-                "h-12 w-full flex flex-col items-center justify-center gap-1 rounded-xl px-2 transition-transform duration-150 active:scale-[0.98]",
+                "relative h-12 w-full flex flex-col items-center justify-center gap-1 rounded-xl px-2 transition-transform duration-150 active:scale-[0.98] overflow-hidden",
                 active &&
                   "bg-muted/60 ring-1 ring-magenta-400/40 shadow-[0_0_18px_rgba(217,70,239,0.35)]",
               )}
             >
               <Link href={item.href} aria-label={item.label}>
-                {item.icon}
+                <span className="relative z-10 inline-flex flex-col items-center justify-center">
+                  {/* Animated active indicator */}
+                  <span
+                    aria-hidden="true"
+                    className={cn(
+                      "absolute -inset-2 rounded-full bg-[radial-gradient(circle_at_center,rgba(217,70,239,0.35),transparent_60%)] opacity-0 scale-75 blur-sm transition-all duration-200",
+                      active && "opacity-100 scale-100",
+                    )}
+                  />
+                  {item.icon}
+                </span>
                 <span
                   className={cn(
                     "text-[11px] font-medium tracking-wide",

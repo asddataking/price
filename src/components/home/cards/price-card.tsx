@@ -35,7 +35,7 @@ export function PriceCard({
   primaryActionLabel,
 }: Props) {
   return (
-    <Card className="w-full border border-white/20 bg-card/80 py-4 shadow-sm transition hover:-translate-y-0.5 hover:shadow-[0_0_24px_rgba(217,70,239,0.25)] active:scale-[0.99] duration-200">
+    <Card className="w-full border border-white/20 bg-card/80 py-4 shadow-sm transition hover:-translate-y-0.5 hover:shadow-[0_0_24px_rgba(217,70,239,0.25)] active:scale-[0.99] duration-150">
       <CardHeader className="pb-3">
         <div className="flex flex-wrap items-center gap-2">
           <Badge

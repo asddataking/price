@@ -23,7 +23,7 @@ export function ActivityCard({
 }: Props) {
   return (
     <Card
-      className="w-full border border-white/20 bg-card/80 py-4 shadow-sm transition hover:-translate-y-0.5 hover:shadow-[0_0_24px_rgba(217,70,239,0.25)] active:scale-[0.99] duration-200"
+      className="w-full border border-white/20 bg-card/80 py-4 shadow-sm transition hover:-translate-y-0.5 hover:shadow-[0_0_24px_rgba(217,70,239,0.25)] active:scale-[0.99] duration-150"
       role={onClick ? "button" : undefined}
       tabIndex={onClick ? 0 : -1}
       onClick={onClick}
