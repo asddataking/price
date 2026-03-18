@@ -1,21 +1,33 @@
 import { createBrowserClient, createServerClient } from "@supabase/ssr"
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
-const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
-
-if (!supabaseUrl) {
-  throw new Error("Missing NEXT_PUBLIC_SUPABASE_URL in environment.")
-}
-
-if (!supabaseAnonKey) {
-  throw new Error("Missing NEXT_PUBLIC_SUPABASE_ANON_KEY in environment.")
-}
+const supabaseAnonKey =
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ??
+  process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY
 
 export const createSupabaseBrowserClient = () =>
-  createBrowserClient(supabaseUrl, supabaseAnonKey)
+  createBrowserClient(
+    (() => {
+      if (!supabaseUrl) throw new Error("Missing NEXT_PUBLIC_SUPABASE_URL in environment.")
+      return supabaseUrl
+    })(),
+    (() => {
+      if (!supabaseAnonKey) throw new Error("Missing NEXT_PUBLIC_SUPABASE_ANON_KEY in environment.")
+      return supabaseAnonKey
+    })(),
+  )
 
 export const createSupabaseServerClient = () =>
-  createServerClient(supabaseUrl, supabaseAnonKey, {
+  createServerClient(
+    (() => {
+      if (!supabaseUrl) throw new Error("Missing NEXT_PUBLIC_SUPABASE_URL in environment.")
+      return supabaseUrl
+    })(),
+    (() => {
+      if (!supabaseAnonKey) throw new Error("Missing NEXT_PUBLIC_SUPABASE_ANON_KEY in environment.")
+      return supabaseAnonKey
+    })(),
+    {
     cookies: {
       async get(name) {
         const { cookies } = await import("next/headers")
@@ -33,5 +45,6 @@ export const createSupabaseServerClient = () =>
         cookieStore.set({ name, value: "", ...options })
       },
     },
-  })
+    },
+  )
 

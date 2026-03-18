@@ -1,7 +1,7 @@
 "use client"
 
 import * as React from "react"
-import { useRouter, useSearchParams } from "next/navigation"
+import { useRouter } from "next/navigation"
 import { createSupabaseBrowserClient } from "@/lib/supabase"
 import { toast } from "sonner"
 import { CardContent, CardHeader, CardTitle } from "@/components/ui/card"
@@ -10,7 +10,6 @@ import { Card } from "@/components/ui/card"
 export default function AuthCallbackPage() {
   const supabase = React.useMemo(() => createSupabaseBrowserClient(), [])
   const router = useRouter()
-  const searchParams = useSearchParams()
 
   const [status, setStatus] = React.useState<"loading" | "done">("loading")
 
@@ -19,14 +18,16 @@ export default function AuthCallbackPage() {
 
     const run = async () => {
       try {
-        const error = searchParams.get("error_description")
+        if (typeof window === "undefined") return
+        const params = new URLSearchParams(window.location.search)
+        const error = params.get("error_description")
         if (error && error.trim() !== "") {
           toast.error(decodeURIComponent(error))
           router.replace("/auth/signin")
           return
         }
 
-        const code = searchParams.get("code")
+        const code = params.get("code")
 
         if (code && code.trim() !== "") {
           const { error: exchangeError } =
@@ -69,7 +70,7 @@ export default function AuthCallbackPage() {
     return () => {
       cancelled = true
     }
-  }, [router, searchParams, supabase])
+  }, [router, supabase])
 
   return (
     <Card className="border bg-card/60 p-4 shadow-sm backdrop-blur">

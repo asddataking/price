@@ -8,6 +8,7 @@ import {
   AdvancedMarker,
   useAdvancedMarkerRef,
 } from "@vis.gl/react-google-maps"
+import { useRouter } from "next/navigation"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
@@ -17,6 +18,7 @@ import { Plus } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { UserMenu } from "@/components/auth/user-menu"
 import ReportSheet from "@/components/reports/report-sheet"
+import { distanceMeters } from "@/lib/geo"
 
 type LatLng = { lat: number; lng: number }
 
@@ -167,6 +169,14 @@ export default function HomeMap() {
 
   const [reportOpen, setReportOpen] = React.useState(false)
 
+  // Win Raids: seeded-store geofencing.
+  const router = useRouter()
+  const [seedStores, setSeedStores] = React.useState<StoreRow[]>([])
+  const [raidSpawnStore, setRaidSpawnStore] = React.useState<StoreRow | null>(null)
+  const raidCooldownRef = React.useRef<Record<string, number>>({})
+  const raidSpawnDistanceMeters = 450
+  const raidSpawnCooldownMs = 20 * 60 * 1000 // 20 minutes
+
   const [itemsById, setItemsById] = React.useState<Record<string, ItemRow>>({})
   const [cheapestByStoreId, setCheapestByStoreId] = React.useState<
     Record<
@@ -175,24 +185,21 @@ export default function HomeMap() {
     >
   >({})
 
-  // Request geolocation once.
+  // Request geolocation once (we use this to center the map).
   React.useEffect(() => {
-    let isMounted = true
     if (!navigator.geolocation) {
       toast.error("Location not available in this browser.")
       return
     }
 
-    navigator.geolocation.getCurrentPosition(
+    const watchId = navigator.geolocation.watchPosition(
       (pos) => {
-        if (!isMounted) return
         setUserLocation({
           lat: pos.coords.latitude,
           lng: pos.coords.longitude,
         })
       },
-      (err) => {
-        if (!isMounted) return
+      (_err) => {
         toast.error("Location permission denied. You can still browse the map.")
         // Port Huron fallback.
         setUserLocation({ lat: 42.9858, lng: -82.4051 })
@@ -201,7 +208,7 @@ export default function HomeMap() {
     )
 
     return () => {
-      isMounted = false
+      navigator.geolocation.clearWatch(watchId)
     }
   }, [toastId])
 
@@ -223,6 +230,59 @@ export default function HomeMap() {
       cancelled = true
     }
   }, [supabase])
+
+  // Load a small seeded set of stores for Win Raid geofencing.
+  React.useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      const { data, error } = await supabase.from("stores").select("*")
+      if (cancelled) return
+      if (error) {
+        toast.error("Failed to load seeded stores.")
+        return
+      }
+      setSeedStores((data ?? []) as StoreRow[])
+    })()
+
+    return () => {
+      cancelled = true
+    }
+  }, [supabase])
+
+  // When near a seeded store, show a one-tap raid join prompt.
+  React.useEffect(() => {
+    if (!userLocation) return
+    if (!seedStores.length) return
+
+    const nearest = [...seedStores]
+      .map((s) => ({
+        store: s,
+        dist: distanceMeters(
+          { lat: Number(userLocation.lat), lng: Number(userLocation.lng) },
+          { lat: Number(s.lat), lng: Number(s.lng) },
+        ),
+      }))
+      .filter((x) => x.dist <= raidSpawnDistanceMeters)
+      .sort((a, b) => a.dist - b.dist)[0]
+
+    if (!nearest) {
+      setRaidSpawnStore(null)
+      return
+    }
+
+    const now = Date.now()
+    const last = raidCooldownRef.current[nearest.store.id] ?? 0
+    const canSpawn = now - last >= raidSpawnCooldownMs
+
+    if (!canSpawn) return
+    if (raidSpawnStore?.id === nearest.store.id) return
+
+    raidCooldownRef.current[nearest.store.id] = now
+    setRaidSpawnStore(nearest.store)
+    toast.info(
+      `Win Raid spawning at ${nearest.store.name}! Join for 150 points + help the squad?`,
+    )
+  }, [raidSpawnStore?.id, seedStores, userLocation])
 
   const fetchStoresInBounds = React.useCallback(
     async (b: google.maps.LatLngBoundsLiteral) => {
@@ -352,7 +412,8 @@ export default function HomeMap() {
             if (!storeIds.includes(newRow.store_id)) return
 
             await fetchCheapestInView(storeIds)
-            toast.success("Squad just W'd verified prices nearby")
+            const storeName = stores.find((s) => s.id === newRow.store_id)?.name ?? "a store"
+            toast.success(`Squad just W'd verified prices at ${storeName}!`)
           },
         )
         .subscribe()
@@ -575,6 +636,36 @@ export default function HomeMap() {
         <div className="pointer-events-none absolute inset-x-0 bottom-4 z-20 flex justify-center px-4">
           <div className="w-full max-w-xl pointer-events-auto">{dealsCard}</div>
         </div>
+
+        {raidSpawnStore ? (
+          <div className="absolute left-4 right-4 bottom-20 z-50 pointer-events-auto">
+            <Card className="border bg-background/90 backdrop-blur">
+              <CardContent className="p-3">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="truncate text-sm font-semibold">
+                      Win Raid spawning at {raidSpawnStore.name}!
+                    </div>
+                    <div className="text-xs text-muted-foreground">
+                      Join for 150 points + help the squad?
+                    </div>
+                  </div>
+                  <Button
+                    type="button"
+                    size="sm"
+                    onClick={() => {
+                      const s = raidSpawnStore
+                      setRaidSpawnStore(null)
+                      router.push(`/win-raid?storeId=${s.id}`)
+                    }}
+                  >
+                    Join
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+        ) : null}
 
         <div className="absolute bottom-6 right-6 z-30">
           <Button

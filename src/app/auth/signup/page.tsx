@@ -1,7 +1,7 @@
 "use client"
 
 import * as React from "react"
-import { useRouter, useSearchParams } from "next/navigation"
+import { useRouter } from "next/navigation"
 import { createSupabaseBrowserClient } from "@/lib/supabase"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -12,17 +12,21 @@ import { Badge } from "@/components/ui/badge"
 export default function SignUpPage() {
   const supabase = React.useMemo(() => createSupabaseBrowserClient(), [])
   const router = useRouter()
-  const searchParams = useSearchParams()
 
   const [email, setEmail] = React.useState("")
   const [loading, setLoading] = React.useState(false)
+  const [errorFromQuery, setErrorFromQuery] = React.useState<string | null>(null)
 
   const redirectTo =
     typeof window !== "undefined"
       ? `${window.location.origin}/auth/callback`
       : "/auth/callback"
 
-  const errorFromQuery = searchParams.get("error_description")
+  React.useEffect(() => {
+    if (typeof window === "undefined") return
+    const sp = new URLSearchParams(window.location.search)
+    setErrorFromQuery(sp.get("error_description"))
+  }, [])
 
   React.useEffect(() => {
     if (!errorFromQuery) return

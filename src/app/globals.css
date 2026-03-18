@@ -127,3 +127,33 @@
     @apply font-sans;
   }
 }
+
+/* Lightweight confetti for raid completion (no external deps). */
+.confetti {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 60;
+}
+
+.confetti-piece {
+  position: absolute;
+  top: -12px;
+  width: var(--size, 8px);
+  height: calc(var(--size, 8px) * 1.35);
+  background: hsl(var(--hue, 180) 90% 60%);
+  border-radius: 2px;
+  opacity: 0.95;
+  animation: confetti-fall 1200ms ease-out forwards;
+  animation-delay: calc(var(--delayMs, 0) * 1ms);
+}
+
+@keyframes confetti-fall {
+  0% {
+    transform: translateY(-20px) rotate(0deg);
+  }
+  100% {
+    transform: translateY(110vh) rotate(720deg);
+    opacity: 0;
+  }
+}
