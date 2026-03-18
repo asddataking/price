@@ -494,14 +494,14 @@ export default function HomeMap({ googleMapsKey }: { googleMapsKey: string }) {
   )
 
   return (
-    <div className="relative min-h-screen">
-      <div className="absolute left-4 top-4 z-40">
+    <div className="relative isolate min-h-screen">
+      <div className="absolute left-4 top-4 z-50">
         <UserMenu />
       </div>
 
       {hasGoogleKey ? (
         <APIProvider apiKey={googleMapsKey}>
-          <div className="absolute inset-0">
+          <div className="absolute inset-0 z-0">
             <Map
               zoom={13}
               center={userLocation ?? { lat: 42.9858, lng: -82.4051 }}
@@ -576,7 +576,7 @@ export default function HomeMap({ googleMapsKey }: { googleMapsKey: string }) {
           </div>
         </APIProvider>
       ) : (
-        <div className="absolute inset-0 overflow-hidden bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-primary/20 via-background to-background">
+        <div className="absolute inset-0 overflow-hidden bg-[radial-gradient(ellipse_at_top,var(--tw-gradient-stops))] from-primary/20 via-background to-background">
           <div className="absolute inset-0 bg-[linear-gradient(to_bottom,rgba(255,255,255,0.03),rgba(255,255,255,0))]" />
           <div className="absolute inset-0 flex items-center justify-center px-6 text-center">
             <div className="max-w-md">
@@ -592,11 +592,11 @@ export default function HomeMap({ googleMapsKey }: { googleMapsKey: string }) {
         </div>
       )}
 
-      <div className="pointer-events-none absolute inset-x-0 bottom-4 z-20 flex justify-center px-4">
+      <div className="pointer-events-none absolute inset-x-0 bottom-4 z-50 flex justify-center px-4">
         <div className="w-full max-w-xl pointer-events-auto">{dealsCard}</div>
       </div>
 
-      <div className="absolute bottom-6 right-6 z-30">
+      <div className="absolute bottom-6 right-6 z-50">
         <Button type="button" className="size-14 rounded-full shadow-lg" onClick={() => setReportOpen(true)}>
           <Plus className="size-5" />
         </Button>
