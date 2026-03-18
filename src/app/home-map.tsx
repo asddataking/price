@@ -153,6 +153,7 @@ function StoreMarker({
 
 export default function HomeMap({ googleMapsKey }: { googleMapsKey: string }) {
   const supabase = React.useMemo(() => createSupabaseBrowserClient(), [])
+  const hasGoogleKey = typeof googleMapsKey === "string" && googleMapsKey.trim().length > 0
 
   const [userLocation, setUserLocation] = React.useState<LatLng | null>(null)
   const [bounds, setBounds] = React.useState<google.maps.LatLngBoundsLiteral | null>(null)
@@ -291,6 +292,33 @@ export default function HomeMap({ googleMapsKey }: { googleMapsKey: string }) {
     [supabase],
   )
 
+  // If the Google Maps JS key is missing, still show the cards UI by loading all stores once.
+  // We compute deals across all stores (small seed set) rather than relying on map bounds.
+  React.useEffect(() => {
+    if (hasGoogleKey) return
+    let cancelled = false
+
+    ;(async () => {
+      const { data, error } = await supabase.from("stores").select("*")
+      if (cancelled) return
+
+      if (error) {
+        toast.error("Failed to load nearby stores.")
+        setStores([])
+        return
+      }
+
+      const rows = (data ?? []) as StoreRow[]
+      setStores(rows)
+      const ids = rows.map((s) => s.id)
+      await fetchCheapestInView(ids)
+    })()
+
+    return () => {
+      cancelled = true
+    }
+  }, [fetchCheapestInView, hasGoogleKey, supabase])
+
   // Debounced bounds -> stores/prices fetch.
   const fetchSeqRef = React.useRef(0)
   const debouncedTimerRef = React.useRef<number | null>(null)
@@ -410,7 +438,7 @@ export default function HomeMap({ googleMapsKey }: { googleMapsKey: string }) {
       </CardHeader>
       <CardContent className="space-y-3">
         {stores.length === 0 ? (
-          <div className="text-sm text-muted-foreground">Move the map to load stores.</div>
+          <div className="text-sm text-muted-foreground">Loading nearby stores...</div>
         ) : stores.length > 0 && Object.keys(cheapestByStoreId).length === 0 ? (
           <div className="text-sm text-muted-foreground">
             No verified prices yet in this area. Be the first to report with photo proof.
@@ -465,127 +493,125 @@ export default function HomeMap({ googleMapsKey }: { googleMapsKey: string }) {
     </Card>
   )
 
-  const hasGoogleKey =
-    typeof googleMapsKey === "string" && googleMapsKey.trim().length > 0
-
-  if (!hasGoogleKey) {
-    return (
-      <main className="relative min-h-screen bg-background p-4">
-        <div className="mx-auto max-w-lg pt-12">
-          <h1 className="text-balance text-3xl font-semibold tracking-tight">
-            WPrice – Real-time local wins
-          </h1>
-          <p className="mt-3 text-sm text-muted-foreground">
-            Missing `NEXT_PUBLIC_GOOGLE_MAPS_API_KEY` in this deployment.
-          </p>
-        </div>
-      </main>
-    )
-  }
-
   return (
-    <APIProvider apiKey={googleMapsKey}>
-      <div className="relative min-h-screen">
-        <div className="absolute left-4 top-4 z-40">
-          <UserMenu />
-        </div>
-        <Map
-          zoom={13}
-          center={userLocation ?? { lat: 42.9858, lng: -82.4051 }}
-          gestureHandling="greedy"
-          disableDefaultUI
-          onIdle={(ev) => {
-            const b = (ev?.detail as any)?.bounds as google.maps.LatLngBoundsLiteral | undefined
-            if (!b) return
-            setBounds(b)
-          }}
-          onClick={() => setSelectedStoreId(null)}
-          mapId="pricedash-map"
-        >
-          {stores.map((s) => {
-            const cheapest = cheapestByStoreId[s.id]
-            const price = cheapest?.price ?? null
+    <div className="relative min-h-screen">
+      <div className="absolute left-4 top-4 z-40">
+        <UserMenu />
+      </div>
 
-            let ratio = 0.5
-            if (minPrice != null && maxPrice != null && price != null) {
-              if (maxPrice === minPrice) ratio = 0
-              else ratio = (price - minPrice) / (maxPrice - minPrice)
-            }
+      {hasGoogleKey ? (
+        <APIProvider apiKey={googleMapsKey}>
+          <div className="absolute inset-0">
+            <Map
+              zoom={13}
+              center={userLocation ?? { lat: 42.9858, lng: -82.4051 }}
+              gestureHandling="greedy"
+              disableDefaultUI
+              onIdle={(ev) => {
+                const b = (ev?.detail as any)?.bounds as google.maps.LatLngBoundsLiteral | undefined
+                if (!b) return
+                setBounds(b)
+              }}
+              onClick={() => setSelectedStoreId(null)}
+              mapId="pricedash-map"
+            >
+              {stores.map((s) => {
+                const cheapest = cheapestByStoreId[s.id]
+                const price = cheapest?.price ?? null
 
-            const minutesAgo = cheapest?.reportedAt
-              ? (Date.now() - new Date(cheapest.reportedAt).getTime()) / 60000
-              : 999999
-            const scale = cheapest ? pinScaleFromRecencyMinutes(minutesAgo) : 0.9
+                let ratio = 0.5
+                if (minPrice != null && maxPrice != null && price != null) {
+                  if (maxPrice === minPrice) ratio = 0
+                  else ratio = (price - minPrice) / (maxPrice - minPrice)
+                }
 
-            const pinColor = price != null ? pinColorFromRatio(ratio) : "#94a3b8"
+                const minutesAgo = cheapest?.reportedAt
+                  ? (Date.now() - new Date(cheapest.reportedAt).getTime()) / 60000
+                  : 999999
+                const scale = cheapest ? pinScaleFromRecencyMinutes(minutesAgo) : 0.9
 
-            const item = cheapest ? itemsById[cheapest.itemId] : undefined
-            const reportAge = cheapest ? timeAgo(cheapest.reportedAt) : "—"
+                const pinColor = price != null ? pinColorFromRatio(ratio) : "#94a3b8"
 
-            return (
-              <StoreMarker
-                key={s.id}
-                store={s}
-                pinColor={pinColor}
-                pinScale={scale}
-                active={activeStoreId === s.id}
-                onHover={(id) => setHoverStoreId(id)}
-                onSelect={(id) => setSelectedStoreId(id)}
-                content={
-                  <div>
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="space-y-1">
-                        <div className="line-clamp-1 font-medium">{s.name}</div>
-                        <div className="text-xs text-muted-foreground">
-                          {item?.name ?? "No item price"} • {reportAge}
+                const item = cheapest ? itemsById[cheapest.itemId] : undefined
+                const reportAge = cheapest ? timeAgo(cheapest.reportedAt) : "—"
+
+                return (
+                  <StoreMarker
+                    key={s.id}
+                    store={s}
+                    pinColor={pinColor}
+                    pinScale={scale}
+                    active={activeStoreId === s.id}
+                    onHover={(id) => setHoverStoreId(id)}
+                    onSelect={(id) => setSelectedStoreId(id)}
+                    content={
+                      <div>
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="space-y-1">
+                            <div className="line-clamp-1 font-medium">{s.name}</div>
+                            <div className="text-xs text-muted-foreground">
+                              {item?.name ?? "No item price"} • {reportAge}
+                            </div>
+                          </div>
+                          {cheapest?.verified ? (
+                            <Badge variant="default" className="bg-emerald-600 hover:bg-emerald-600">
+                              Verified
+                            </Badge>
+                          ) : (
+                            <Badge variant="secondary">No verified</Badge>
+                          )}
+                        </div>
+                        <div className="mt-3 flex items-center justify-between">
+                          <div className="text-sm text-muted-foreground">Current cheapest</div>
+                          <div className="text-base font-semibold">
+                            {cheapest?.price != null ? `$${cheapest.price.toFixed(2)}` : "—"}
+                          </div>
                         </div>
                       </div>
-                      {cheapest?.verified ? (
-                        <Badge variant="default" className="bg-emerald-600 hover:bg-emerald-600">
-                          Verified
-                        </Badge>
-                      ) : (
-                        <Badge variant="secondary">No verified</Badge>
-                      )}
-                    </div>
-                    <div className="mt-3 flex items-center justify-between">
-                      <div className="text-sm text-muted-foreground">Current cheapest</div>
-                      <div className="text-base font-semibold">
-                        {cheapest?.price != null ? `$${cheapest.price.toFixed(2)}` : "—"}
-                      </div>
-                    </div>
-                  </div>
-                }
-              />
-            )
-          })}
-        </Map>
-
-        <div className="pointer-events-none absolute inset-x-0 bottom-4 z-20 flex justify-center px-4">
-          <div className="w-full max-w-xl pointer-events-auto">{dealsCard}</div>
+                    }
+                  />
+                )
+              })}
+            </Map>
+          </div>
+        </APIProvider>
+      ) : (
+        <div className="absolute inset-0 overflow-hidden bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-primary/20 via-background to-background">
+          <div className="absolute inset-0 bg-[linear-gradient(to_bottom,rgba(255,255,255,0.03),rgba(255,255,255,0))]" />
+          <div className="absolute inset-0 flex items-center justify-center px-6 text-center">
+            <div className="max-w-md">
+              <div className="text-sm font-medium text-muted-foreground">Maps disabled</div>
+              <div className="mt-2 text-2xl font-semibold tracking-tight">
+                Enable the Google Maps API key to see pins
+              </div>
+              <div className="mt-3 text-sm text-muted-foreground">
+                You can still browse verified deals and submit reports.
+              </div>
+            </div>
+          </div>
         </div>
+      )}
 
-        <div className="absolute bottom-6 right-6 z-30">
-          <Button
-            type="button"
-            className="size-14 rounded-full shadow-lg"
-            onClick={() => setReportOpen(true)}
-          >
-            <Plus className="size-5" />
-          </Button>
-        </div>
-
-        <ReportSheet
-          open={reportOpen}
-          onOpenChange={setReportOpen}
-          defaultStoreId={defaultReportStoreId}
-          stores={stores}
-          itemsById={itemsById}
-          onOptimisticReport={onOptimisticReport}
-          onRefreshCheapest={refreshCheapest}
-        />
+      <div className="pointer-events-none absolute inset-x-0 bottom-4 z-20 flex justify-center px-4">
+        <div className="w-full max-w-xl pointer-events-auto">{dealsCard}</div>
       </div>
-    </APIProvider>
+
+      <div className="absolute bottom-6 right-6 z-30">
+        <Button type="button" className="size-14 rounded-full shadow-lg" onClick={() => setReportOpen(true)}>
+          <Plus className="size-5" />
+        </Button>
+      </div>
+
+      <ReportSheet
+        open={reportOpen}
+        onOpenChange={setReportOpen}
+        defaultStoreId={defaultReportStoreId}
+        stores={stores}
+        itemsById={itemsById}
+        onOptimisticReport={onOptimisticReport}
+        onRefreshCheapest={refreshCheapest}
+      />
+    </div>
   )
 }
 
