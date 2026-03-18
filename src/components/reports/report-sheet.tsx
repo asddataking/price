@@ -376,9 +376,9 @@ export default function ReportSheet({
                   setSubmitting(true)
                   const { data: { user }, error: userError } = await supabase.auth.getUser()
                   if (userError || !user) {
-                    toast.error("Please sign in to report prices.")
+                    toast.error("Create an account to report prices.")
                     setSubmitting(false)
-                    window.location.href = "/auth/signin"
+                    window.location.href = "/auth/signup"
                     return
                   }
 
