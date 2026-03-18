@@ -12,6 +12,7 @@ export default function AuthCallbackPage() {
   const router = useRouter()
 
   const [status, setStatus] = React.useState<"loading" | "done">("loading")
+  const POST_LOGIN_PATH_KEY = "wprice:postLoginPath"
 
   React.useEffect(() => {
     let cancelled = false
@@ -57,6 +58,25 @@ export default function AuthCallbackPage() {
         }
 
         toast.success("You’re signed in.")
+
+        const pending = (() => {
+          try {
+            return window.localStorage.getItem(POST_LOGIN_PATH_KEY)
+          } catch {
+            return null
+          }
+        })()
+
+        if (pending) {
+          try {
+            window.localStorage.removeItem(POST_LOGIN_PATH_KEY)
+          } catch {
+            // ignore
+          }
+          router.replace(pending)
+          return
+        }
+
         router.replace("/")
       } catch (e: any) {
         toast.error(e?.message ?? "Failed to complete sign-in.")

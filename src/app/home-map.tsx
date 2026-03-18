@@ -495,7 +495,7 @@ export default function HomeMap({ googleMapsKey }: { googleMapsKey: string }) {
 
   return (
     <div className="relative isolate min-h-screen">
-      <div className="absolute left-4 top-4 z-50">
+      <div className="fixed left-4 top-4" style={{ zIndex: 100000 }}>
         <UserMenu />
       </div>
 
@@ -592,11 +592,14 @@ export default function HomeMap({ googleMapsKey }: { googleMapsKey: string }) {
         </div>
       )}
 
-      <div className="pointer-events-none absolute inset-x-0 bottom-4 z-50 flex justify-center px-4">
+      <div
+        className="pointer-events-none fixed inset-x-0 bottom-4 flex justify-center px-4"
+        style={{ zIndex: 100000 }}
+      >
         <div className="w-full max-w-xl pointer-events-auto">{dealsCard}</div>
       </div>
 
-      <div className="absolute bottom-6 right-6 z-50">
+      <div className="fixed bottom-6 right-6" style={{ zIndex: 100000 }}>
         <Button type="button" className="size-14 rounded-full shadow-lg" onClick={() => setReportOpen(true)}>
           <Plus className="size-5" />
         </Button>
