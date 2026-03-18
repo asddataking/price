@@ -58,11 +58,20 @@ function confidenceBadgeFromMinutes(m: number): PriceCardConfidence {
   return { label: "Verified", className: "bg-primary/10 text-primary" }
 }
 
-export default function HomeFeed() {
+export type HomeFeedRenderMode = "live" | "blurred"
+
+type HomeFeedProps = {
+  renderMode?: HomeFeedRenderMode
+}
+
+export default function HomeFeed({ renderMode = "live" }: HomeFeedProps) {
   const router = useRouter()
   const supabase = React.useMemo(() => createSupabaseBrowserClient(), [])
+  const isLive = renderMode === "live"
 
-  const [userLocation, setUserLocation] = React.useState<LatLng | null>(null)
+  const [userLocation, setUserLocation] = React.useState<LatLng | null>(
+    isLive ? null : { lat: 42.9858, lng: -82.4051 },
+  )
   const [locationMode, setLocationMode] = React.useState<"phone" | "manual">("phone")
   const [manualLocationInput, setManualLocationInput] = React.useState("")
   const [locationError, setLocationError] = React.useState<string | null>(null)
@@ -83,6 +92,7 @@ export default function HomeFeed() {
     let cancelled = false
 
     const run = async () => {
+      if (!isLive) return
       if (locationMode !== "phone") return
       setLocationError(null)
       setLoading(true)
@@ -114,9 +124,10 @@ export default function HomeFeed() {
     return () => {
       cancelled = true
     }
-  }, [locationMode])
+  }, [locationMode, isLive])
 
   async function resolveManualLocation() {
+    if (!isLive) return
     const address = manualLocationInput.trim()
     if (!address) return
 
@@ -162,6 +173,7 @@ export default function HomeFeed() {
   React.useEffect(() => {
     let cancelled = false
     if (!userLocation) return
+    if (!isLive) return
 
     const load = async () => {
       setLoading(true)
@@ -244,7 +256,7 @@ export default function HomeFeed() {
     return () => {
       cancelled = true
     }
-  }, [supabase, userLocation])
+  }, [supabase, userLocation, isLive])
 
   const userDistanceByStoreId = React.useMemo(() => {
     if (!userLocation) return {}
@@ -387,54 +399,56 @@ export default function HomeFeed() {
               <div className="text-sm font-medium text-muted-foreground">Location</div>
               <div className="truncate text-2xl font-black tracking-tight">{locationLabel}</div>
 
-              <div className="mt-2 flex flex-wrap items-center gap-2">
-                <Button
-                  type="button"
-                  variant={locationMode === "phone" ? "default" : "outline"}
-                  className="h-8 rounded-xl px-3 text-base"
-                  onClick={() => setLocationMode("phone")}
-                  disabled={loading}
-                >
-                  Phone
-                </Button>
-                <Button
-                  type="button"
-                  variant={locationMode === "manual" ? "default" : "outline"}
-                  className="h-8 rounded-xl px-3 text-base"
-                  onClick={() => setLocationMode("manual")}
-                  disabled={loading}
-                >
-                  City/Area
-                </Button>
-              </div>
+                {isLive ? (
+                  <>
+                    <div className="mt-2 flex flex-wrap items-center gap-2">
+                      <Button
+                        type="button"
+                        variant={locationMode === "phone" ? "default" : "outline"}
+                        className="h-8 rounded-xl px-3 text-base"
+                        onClick={() => setLocationMode("phone")}
+                        disabled={loading}
+                      >
+                        Phone
+                      </Button>
+                      <Button
+                        type="button"
+                        variant={locationMode === "manual" ? "default" : "outline"}
+                        className="h-8 rounded-xl px-3 text-base"
+                        onClick={() => setLocationMode("manual")}
+                        disabled={loading}
+                      >
+                        City/Area
+                      </Button>
+                    </div>
 
-              {locationMode === "manual" ? (
-                <div className="mt-2 flex items-center gap-2">
-                  <Input
-                    value={manualLocationInput}
-                    onChange={(e) => setManualLocationInput(e.target.value)}
-                    placeholder="City or area (e.g. Detroit)"
-                    className="h-8 text-base"
-                    disabled={loading}
-                    onKeyDown={(e) => {
-                      if (e.key !== "Enter") return
-                      resolveManualLocation()
-                    }}
-                  />
-                  <Button
-                    type="button"
-                    className="h-8 rounded-xl px-3 text-base"
-                    onClick={resolveManualLocation}
-                    disabled={loading || manualLocationInput.trim().length === 0}
-                  >
-                    Set
-                  </Button>
-                </div>
-              ) : null}
+                    {locationMode === "manual" ? (
+                      <div className="mt-2 flex items-center gap-2">
+                        <Input
+                          value={manualLocationInput}
+                          onChange={(e) => setManualLocationInput(e.target.value)}
+                          placeholder="City or area (e.g. Detroit)"
+                          className="h-8 text-base"
+                          disabled={loading}
+                          onKeyDown={(e) => {
+                            if (e.key !== "Enter") return
+                            resolveManualLocation()
+                          }}
+                        />
+                        <Button
+                          type="button"
+                          className="h-8 rounded-xl px-3 text-base"
+                          onClick={resolveManualLocation}
+                          disabled={loading || manualLocationInput.trim().length === 0}
+                        >
+                          Set
+                        </Button>
+                      </div>
+                    ) : null}
 
-              {locationError ? (
-                <div className="mt-1 text-xs text-red-300">{locationError}</div>
-              ) : null}
+                    {locationError ? <div className="mt-1 text-xs text-red-300">{locationError}</div> : null}
+                  </>
+                ) : null}
             </div>
 
             <Button variant="ghost" className="rounded-xl px-3" onClick={() => router.push("/map")}>
@@ -515,16 +529,20 @@ export default function HomeFeed() {
           </div>
 
           <div className="space-y-3">
-            {raidCards.map((c) => (
-              <RaidCard
-                key={c.store.id}
-                storeName={c.store.name}
-                rewardPoints={150}
-                distanceText={c.distanceText}
-                captureCopy="Capture 8 snaps (3 steps)"
-                onStartRaid={() => router.push(`/raid/${c.store.id}`)}
-              />
-            ))}
+            {isLive
+              ? raidCards.map((c) => (
+                  <RaidCard
+                    key={c.store.id}
+                    storeName={c.store.name}
+                    rewardPoints={150}
+                    distanceText={c.distanceText}
+                    captureCopy="Capture 8 snaps (3 steps)"
+                    onStartRaid={() => router.push(`/raid/${c.store.id}`)}
+                  />
+                ))
+              : Array.from({ length: 2 }).map((_, idx) => (
+                  <Card key={idx} className="h-24 w-full animate-pulse bg-muted/40" />
+                ))}
           </div>
         </section>
 
@@ -540,16 +558,20 @@ export default function HomeFeed() {
           </div>
 
           <div className="grid grid-cols-2 gap-3">
-            {storesSection.map((x) => (
-              <StoreCard
-                key={x.s.id}
-                storeName={x.s.name}
-                trackedItems={x.tracked}
-                lastUpdateText={x.lastUpdateText}
-                distanceText={x.distanceText}
-                onRaidHere={() => router.push(`/raid/${x.s.id}`)}
-              />
-            ))}
+            {isLive
+              ? storesSection.map((x) => (
+                  <StoreCard
+                    key={x.s.id}
+                    storeName={x.s.name}
+                    trackedItems={x.tracked}
+                    lastUpdateText={x.lastUpdateText}
+                    distanceText={x.distanceText}
+                    onRaidHere={() => router.push(`/raid/${x.s.id}`)}
+                  />
+                ))
+              : Array.from({ length: 4 }).map((_, idx) => (
+                  <Card key={idx} className="h-44 animate-pulse bg-muted/40" />
+                ))}
           </div>
         </section>
 
@@ -562,23 +584,27 @@ export default function HomeFeed() {
           </div>
 
           <div className="space-y-3">
-            {activityFeed.map((row) => {
-              const store = stores.find((s) => s.id === row.store_id)
-              const item = itemsById[row.item_id]
-              if (!store) return null
-              const distM = userDistanceByStoreId[store.id] ?? 0
-              return (
-                <ActivityCard
-                  key={`${row.store_id}:${row.item_id}:${row.reported_at}`}
-                  storeName={store.name}
-                  itemName={item?.name ?? "Item"}
-                  price={Number(row.price)}
-                  lastWdnMinutesAgo={minutesAgo(row.reported_at)}
-                  distanceText={formatDistance(distM)}
-                  onClick={() => router.push(`/raid/${store.id}`)}
-                />
-              )
-            })}
+            {isLive
+              ? activityFeed.map((row) => {
+                  const store = stores.find((s) => s.id === row.store_id)
+                  const item = itemsById[row.item_id]
+                  if (!store) return null
+                  const distM = userDistanceByStoreId[store.id] ?? 0
+                  return (
+                    <ActivityCard
+                      key={`${row.store_id}:${row.item_id}:${row.reported_at}`}
+                      storeName={store.name}
+                      itemName={item?.name ?? "Item"}
+                      price={Number(row.price)}
+                      lastWdnMinutesAgo={minutesAgo(row.reported_at)}
+                      distanceText={formatDistance(distM)}
+                      onClick={() => router.push(`/raid/${store.id}`)}
+                    />
+                  )
+                })
+              : Array.from({ length: 4 }).map((_, idx) => (
+                  <Card key={idx} className="h-24 animate-pulse bg-muted/40" />
+                ))}
           </div>
         </section>
       </div>
