@@ -494,115 +494,120 @@ export default function HomeMap({ googleMapsKey }: { googleMapsKey: string }) {
   )
 
   return (
-    <div className="relative isolate min-h-screen">
-      <div className="fixed left-4 top-4" style={{ zIndex: 100000 }}>
-        <UserMenu />
-      </div>
+    <div className="relative isolate min-h-dvh flex flex-col">
+      {/* Map area (phone-sized). */}
+      <div className="relative h-[58vh] sm:h-[62vh] overflow-hidden">
+        <div className="absolute left-4 top-4" style={{ zIndex: 100000 }}>
+          <UserMenu />
+        </div>
 
-      {hasGoogleKey ? (
-        <APIProvider apiKey={googleMapsKey}>
-          <div className="absolute inset-0 z-0">
-            <Map
-              zoom={13}
-              center={userLocation ?? { lat: 42.9858, lng: -82.4051 }}
-              gestureHandling="greedy"
-              disableDefaultUI
-              onIdle={(ev) => {
-                const b = (ev?.detail as any)?.bounds as google.maps.LatLngBoundsLiteral | undefined
-                if (!b) return
-                setBounds(b)
-              }}
-              onClick={() => setSelectedStoreId(null)}
-              mapId="pricedash-map"
-            >
-              {stores.map((s) => {
-                const cheapest = cheapestByStoreId[s.id]
-                const price = cheapest?.price ?? null
+        {hasGoogleKey ? (
+          <APIProvider apiKey={googleMapsKey}>
+            <div className="absolute inset-0 z-0">
+              <Map
+                zoom={13}
+                center={userLocation ?? { lat: 42.9858, lng: -82.4051 }}
+                gestureHandling="greedy"
+                disableDefaultUI
+                onIdle={(ev) => {
+                  const b = (ev?.detail as any)?.bounds as google.maps.LatLngBoundsLiteral | undefined
+                  if (!b) return
+                  setBounds(b)
+                }}
+                onClick={() => setSelectedStoreId(null)}
+                mapId="pricedash-map"
+              >
+                {stores.map((s) => {
+                  const cheapest = cheapestByStoreId[s.id]
+                  const price = cheapest?.price ?? null
 
-                let ratio = 0.5
-                if (minPrice != null && maxPrice != null && price != null) {
-                  if (maxPrice === minPrice) ratio = 0
-                  else ratio = (price - minPrice) / (maxPrice - minPrice)
-                }
+                  let ratio = 0.5
+                  if (minPrice != null && maxPrice != null && price != null) {
+                    if (maxPrice === minPrice) ratio = 0
+                    else ratio = (price - minPrice) / (maxPrice - minPrice)
+                  }
 
-                const minutesAgo = cheapest?.reportedAt
-                  ? (Date.now() - new Date(cheapest.reportedAt).getTime()) / 60000
-                  : 999999
-                const scale = cheapest ? pinScaleFromRecencyMinutes(minutesAgo) : 0.9
+                  const minutesAgo = cheapest?.reportedAt
+                    ? (Date.now() - new Date(cheapest.reportedAt).getTime()) / 60000
+                    : 999999
+                  const scale = cheapest ? pinScaleFromRecencyMinutes(minutesAgo) : 0.9
 
-                const pinColor = price != null ? pinColorFromRatio(ratio) : "#94a3b8"
+                  const pinColor = price != null ? pinColorFromRatio(ratio) : "#94a3b8"
 
-                const item = cheapest ? itemsById[cheapest.itemId] : undefined
-                const reportAge = cheapest ? timeAgo(cheapest.reportedAt) : "—"
+                  const item = cheapest ? itemsById[cheapest.itemId] : undefined
+                  const reportAge = cheapest ? timeAgo(cheapest.reportedAt) : "—"
 
-                return (
-                  <StoreMarker
-                    key={s.id}
-                    store={s}
-                    pinColor={pinColor}
-                    pinScale={scale}
-                    active={activeStoreId === s.id}
-                    onHover={(id) => setHoverStoreId(id)}
-                    onSelect={(id) => setSelectedStoreId(id)}
-                    content={
-                      <div>
-                        <div className="flex items-start justify-between gap-3">
-                          <div className="space-y-1">
-                            <div className="line-clamp-1 font-medium">{s.name}</div>
-                            <div className="text-xs text-muted-foreground">
-                              {item?.name ?? "No item price"} • {reportAge}
+                  return (
+                    <StoreMarker
+                      key={s.id}
+                      store={s}
+                      pinColor={pinColor}
+                      pinScale={scale}
+                      active={activeStoreId === s.id}
+                      onHover={(id) => setHoverStoreId(id)}
+                      onSelect={(id) => setSelectedStoreId(id)}
+                      content={
+                        <div>
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="space-y-1">
+                              <div className="line-clamp-1 font-medium">{s.name}</div>
+                              <div className="text-xs text-muted-foreground">
+                                {item?.name ?? "No item price"} • {reportAge}
+                              </div>
+                            </div>
+                            {cheapest?.verified ? (
+                              <Badge variant="default" className="bg-emerald-600 hover:bg-emerald-600">
+                                Verified
+                              </Badge>
+                            ) : (
+                              <Badge variant="secondary">No verified</Badge>
+                            )}
+                          </div>
+                          <div className="mt-3 flex items-center justify-between">
+                            <div className="text-sm text-muted-foreground">Current cheapest</div>
+                            <div className="text-base font-semibold">
+                              {cheapest?.price != null ? `$${cheapest.price.toFixed(2)}` : "—"}
                             </div>
                           </div>
-                          {cheapest?.verified ? (
-                            <Badge variant="default" className="bg-emerald-600 hover:bg-emerald-600">
-                              Verified
-                            </Badge>
-                          ) : (
-                            <Badge variant="secondary">No verified</Badge>
-                          )}
                         </div>
-                        <div className="mt-3 flex items-center justify-between">
-                          <div className="text-sm text-muted-foreground">Current cheapest</div>
-                          <div className="text-base font-semibold">
-                            {cheapest?.price != null ? `$${cheapest.price.toFixed(2)}` : "—"}
-                          </div>
-                        </div>
-                      </div>
-                    }
-                  />
-                )
-              })}
-            </Map>
-          </div>
-        </APIProvider>
-      ) : (
-        <div className="absolute inset-0 overflow-hidden bg-[radial-gradient(ellipse_at_top,var(--tw-gradient-stops))] from-primary/20 via-background to-background">
-          <div className="absolute inset-0 bg-[linear-gradient(to_bottom,rgba(255,255,255,0.03),rgba(255,255,255,0))]" />
-          <div className="absolute inset-0 flex items-center justify-center px-6 text-center">
-            <div className="max-w-md">
-              <div className="text-sm font-medium text-muted-foreground">Maps disabled</div>
-              <div className="mt-2 text-2xl font-semibold tracking-tight">
-                Enable the Google Maps API key to see pins
-              </div>
-              <div className="mt-3 text-sm text-muted-foreground">
-                You can still browse verified deals and submit reports.
+                      }
+                    />
+                  )
+                })}
+              </Map>
+            </div>
+          </APIProvider>
+        ) : (
+          <div className="absolute inset-0 overflow-hidden bg-[radial-gradient(ellipse_at_top,var(--tw-gradient-stops))] from-primary/20 via-background to-background">
+            <div className="absolute inset-0 bg-[linear-gradient(to_bottom,rgba(255,255,255,0.03),rgba(255,255,255,0))]" />
+            <div className="absolute inset-0 flex items-center justify-center px-6 text-center">
+              <div className="max-w-md">
+                <div className="text-sm font-medium text-muted-foreground">Maps disabled</div>
+                <div className="mt-2 text-2xl font-semibold tracking-tight">
+                  Enable the Google Maps API key to see pins
+                </div>
+                <div className="mt-3 text-sm text-muted-foreground">
+                  You can still browse verified deals and submit reports.
+                </div>
               </div>
             </div>
           </div>
-        </div>
-      )}
+        )}
 
-      <div
-        className="pointer-events-none fixed inset-x-0 bottom-4 flex justify-center px-4"
-        style={{ zIndex: 100000 }}
-      >
-        <div className="w-full max-w-xl pointer-events-auto">{dealsCard}</div>
+        <div className="absolute bottom-6 right-6" style={{ zIndex: 100000 }}>
+          <Button
+            type="button"
+            className="size-14 rounded-full shadow-lg"
+            onClick={() => setReportOpen(true)}
+          >
+            <Plus className="size-5" />
+          </Button>
+        </div>
       </div>
 
-      <div className="fixed bottom-6 right-6" style={{ zIndex: 100000 }}>
-        <Button type="button" className="size-14 rounded-full shadow-lg" onClick={() => setReportOpen(true)}>
-          <Plus className="size-5" />
-        </Button>
+      {/* Deals card under the map (app-like stack). */}
+      <div className="relative z-10 px-4 pb-6">
+        <div className="mx-auto w-full max-w-xl">{dealsCard}</div>
       </div>
 
       <ReportSheet
