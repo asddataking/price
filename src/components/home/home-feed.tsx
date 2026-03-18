@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
+import { Input } from "@/components/ui/input"
 import { createSupabaseBrowserClient } from "@/lib/supabase"
 import { distanceMeters } from "@/lib/geo"
 import { BottomNav } from "@/components/navigation/bottom-nav"
@@ -62,6 +63,9 @@ export default function HomeFeed() {
   const supabase = React.useMemo(() => createSupabaseBrowserClient(), [])
 
   const [userLocation, setUserLocation] = React.useState<LatLng | null>(null)
+  const [locationMode, setLocationMode] = React.useState<"phone" | "manual">("phone")
+  const [manualLocationInput, setManualLocationInput] = React.useState("")
+  const [locationError, setLocationError] = React.useState<string | null>(null)
   const [loading, setLoading] = React.useState(true)
 
   const [stores, setStores] = React.useState<StoreRow[]>([])
@@ -73,12 +77,14 @@ export default function HomeFeed() {
 
   const [recentVerified, setRecentVerified] = React.useState<PriceReportRow[]>([])
 
-  const locationLabel = "Near You"
+  const [locationLabel, setLocationLabel] = React.useState("Near You")
 
   React.useEffect(() => {
     let cancelled = false
 
     const run = async () => {
+      if (locationMode !== "phone") return
+      setLocationError(null)
       setLoading(true)
       const fallback = { lat: 42.9858, lng: -82.4051 }
 
@@ -93,9 +99,11 @@ export default function HomeFeed() {
         })
 
         if (cancelled) return
+        setLocationLabel("Near You")
         setUserLocation({ lat: pos.coords.latitude, lng: pos.coords.longitude })
       } catch {
         if (cancelled) return
+        setLocationLabel("Near You")
         setUserLocation(fallback)
       } finally {
         if (!cancelled) setLoading(false)
@@ -106,7 +114,50 @@ export default function HomeFeed() {
     return () => {
       cancelled = true
     }
-  }, [])
+  }, [locationMode])
+
+  async function resolveManualLocation() {
+    const address = manualLocationInput.trim()
+    if (!address) return
+
+    setLocationError(null)
+    setLoading(true)
+    try {
+      const res = await fetch("/api/google", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "geocode",
+          params: { address },
+        }),
+      })
+
+      const json = await res.json()
+      const status = json?.status
+      const ok = res.ok && status === "OK"
+
+      const loc = json?.results?.[0]?.geometry?.location
+      const formattedAddress = typeof json?.results?.[0]?.formatted_address === "string" ? json.results[0].formatted_address : null
+
+      if (!ok || !loc || typeof loc.lat !== "number" || typeof loc.lng !== "number") {
+        const msg =
+          typeof json?.error_message === "string"
+            ? json.error_message
+            : typeof status === "string"
+              ? `Geocode failed: ${status}`
+              : "Geocode failed"
+        throw new Error(msg)
+      }
+
+      setUserLocation({ lat: loc.lat, lng: loc.lng })
+      const label = formattedAddress ? formattedAddress : address
+      setLocationLabel(`Near ${label}`)
+    } catch (e) {
+      setLocationError(e instanceof Error ? e.message : "Could not resolve that location.")
+    } finally {
+      setLoading(false)
+    }
+  }
 
   React.useEffect(() => {
     let cancelled = false
@@ -207,6 +258,46 @@ export default function HomeFeed() {
     return out
   }, [stores, userLocation])
 
+  const storesWithin1MiCount = React.useMemo(() => {
+    if (!userLocation) return 0
+    const withinM = 1609.34
+    return stores.reduce((acc, s) => acc + ((userDistanceByStoreId[s.id] ?? Infinity) <= withinM ? 1 : 0), 0)
+  }, [stores, userLocation, userDistanceByStoreId])
+
+  const storesWithin5MiCount = React.useMemo(() => {
+    if (!userLocation) return 0
+    const withinM = 8046.72
+    return stores.reduce((acc, s) => acc + ((userDistanceByStoreId[s.id] ?? Infinity) <= withinM ? 1 : 0), 0)
+  }, [stores, userLocation, userDistanceByStoreId])
+
+  const closestVerifiedDeal = React.useMemo(() => {
+    if (!userLocation) return null
+
+    let best:
+      | null
+      | {
+          store: StoreRow
+          item?: ItemRow
+          price: number
+          distanceMeters: number
+        } = null
+
+    for (const s of stores) {
+      const cheapest = cheapestByStoreId[s.id]
+      if (!cheapest) continue
+      const distM = userDistanceByStoreId[s.id] ?? Infinity
+      if (!best || distM < best.distanceMeters) {
+        best = {
+          store: s,
+          item: itemsById[cheapest.itemId],
+          price: cheapest.price,
+          distanceMeters: distM,
+        }
+      }
+    }
+    return best
+  }, [stores, userLocation, cheapestByStoreId, itemsById, userDistanceByStoreId])
+
   const hotWins = React.useMemo(() => {
     if (!userLocation) return []
     const out: Array<{
@@ -244,7 +335,8 @@ export default function HomeFeed() {
     return stores
       .slice()
       .sort((a, b) => (userDistanceByStoreId[a.id] ?? 0) - (userDistanceByStoreId[b.id] ?? 0))
-      .slice(0, 3)
+      // Make the “Win Raids Nearby” area more compact on the home feed.
+      .slice(0, 2)
       .map((s) => ({
         store: s,
         distanceText: formatDistance(userDistanceByStoreId[s.id] ?? 0),
@@ -292,8 +384,57 @@ export default function HomeFeed() {
         <div className="mx-auto max-w-xl px-4 py-3">
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
-              <div className="text-xs font-medium text-muted-foreground">Location</div>
-              <div className="truncate text-xl font-black tracking-tight">{locationLabel}</div>
+              <div className="text-sm font-medium text-muted-foreground">Location</div>
+              <div className="truncate text-2xl font-black tracking-tight">{locationLabel}</div>
+
+              <div className="mt-2 flex flex-wrap items-center gap-2">
+                <Button
+                  type="button"
+                  variant={locationMode === "phone" ? "default" : "outline"}
+                  className="h-8 rounded-xl px-3 text-base"
+                  onClick={() => setLocationMode("phone")}
+                  disabled={loading}
+                >
+                  Phone
+                </Button>
+                <Button
+                  type="button"
+                  variant={locationMode === "manual" ? "default" : "outline"}
+                  className="h-8 rounded-xl px-3 text-base"
+                  onClick={() => setLocationMode("manual")}
+                  disabled={loading}
+                >
+                  City/Area
+                </Button>
+              </div>
+
+              {locationMode === "manual" ? (
+                <div className="mt-2 flex items-center gap-2">
+                  <Input
+                    value={manualLocationInput}
+                    onChange={(e) => setManualLocationInput(e.target.value)}
+                    placeholder="City or area (e.g. Detroit)"
+                    className="h-8 text-base"
+                    disabled={loading}
+                    onKeyDown={(e) => {
+                      if (e.key !== "Enter") return
+                      resolveManualLocation()
+                    }}
+                  />
+                  <Button
+                    type="button"
+                    className="h-8 rounded-xl px-3 text-base"
+                    onClick={resolveManualLocation}
+                    disabled={loading || manualLocationInput.trim().length === 0}
+                  >
+                    Set
+                  </Button>
+                </div>
+              ) : null}
+
+              {locationError ? (
+                <div className="mt-1 text-xs text-red-300">{locationError}</div>
+              ) : null}
             </div>
 
             <Button variant="ghost" className="rounded-xl px-3" onClick={() => router.push("/map")}>
@@ -307,10 +448,20 @@ export default function HomeFeed() {
         <section className="space-y-3">
           <div className="flex items-end justify-between gap-3">
             <div>
-              <div className="text-sm font-semibold">🔥 Hot Wins Near You</div>
+              <div className="text-base font-semibold">🔥 Hot Wins Near You</div>
               <div className="text-xs text-muted-foreground">Verified deals that are actually cheap</div>
+              <div className="text-xs text-muted-foreground">
+                {closestVerifiedDeal
+                  ? `Closest verified: ${formatDistance(closestVerifiedDeal.distanceMeters)} • $${closestVerifiedDeal.price.toFixed(2)}`
+                  : "Closest verified: —"}
+              </div>
             </div>
-            <Badge variant="secondary" className="rounded-full px-3 py-0.5 text-xs">Best price-first</Badge>
+            <Badge
+              variant="secondary"
+              className="rounded-full px-3 py-0.5 text-xs ring-1 ring-magenta-400/30 shadow-[0_0_18px_rgba(217,70,239,0.25)]"
+            >
+              Best price-first
+            </Badge>
           </div>
 
           {loading ? (
@@ -352,10 +503,15 @@ export default function HomeFeed() {
         <section className="space-y-3">
           <div className="flex items-end justify-between gap-3">
             <div>
-              <div className="text-sm font-semibold">⚡ Win Raids Nearby</div>
+              <div className="text-base font-semibold">⚡ Win Raids Nearby</div>
               <div className="text-xs text-muted-foreground">Earn points by snapping receipts</div>
             </div>
-            <Badge variant="outline" className="rounded-full px-3 py-0.5 text-xs">8 snaps • 3 steps</Badge>
+            <Badge
+              variant="outline"
+              className="rounded-full px-3 py-0.5 text-xs ring-1 ring-yellow-300/20 shadow-[0_0_18px_rgba(255,214,0,0.18)]"
+            >
+              8 snaps • 3 steps
+            </Badge>
           </div>
 
           <div className="space-y-3">
@@ -375,8 +531,11 @@ export default function HomeFeed() {
         <section className="space-y-3">
           <div className="flex items-end justify-between gap-3">
             <div>
-              <div className="text-sm font-semibold">🏪 Stores Near You</div>
-              <div className="text-xs text-muted-foreground">Where we track verified prices</div>
+              <div className="text-base font-semibold">🏪 Stores Near You</div>
+              <div className="text-xs text-muted-foreground">
+                Where we track verified prices • Within 1 mi: {storesWithin1MiCount} • Within 5 mi:{" "}
+                {storesWithin5MiCount}
+              </div>
             </div>
           </div>
 
@@ -397,7 +556,7 @@ export default function HomeFeed() {
         <section className="space-y-3 pb-6">
           <div className="flex items-end justify-between gap-3">
             <div>
-              <div className="text-sm font-semibold">📊 Recently Updated Prices</div>
+              <div className="text-base font-semibold">📊 Recently Updated Prices</div>
               <div className="text-xs text-muted-foreground">Someone just W’d this</div>
             </div>
           </div>

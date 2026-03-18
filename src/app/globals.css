@@ -1,6 +1,7 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
+@import url("https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;600;700&display=swap");
 
 @custom-variant dark (&:is(.dark *));
 
@@ -136,6 +137,19 @@
 }
 
 /* 90s neon grid + subtle noise. */
+.wprice-shell {
+  font-family:
+    Orbitron,
+    ui-sans-serif,
+    system-ui,
+    -apple-system,
+    Segoe UI,
+    Roboto,
+    Helvetica,
+    Arial,
+    sans-serif;
+}
+
 .wprice-neon-bg {
   position: absolute;
   inset: 0;
@@ -154,8 +168,8 @@
 /* Grid */
 .wprice-neon-bg::before {
   background-image:
-    linear-gradient(to right, rgba(34, 211, 238, 0.28) 1px, transparent 1px),
-    linear-gradient(to bottom, rgba(34, 211, 238, 0.28) 1px, transparent 1px);
+    linear-gradient(to right, rgba(217, 70, 239, 0.28) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(217, 70, 239, 0.28) 1px, transparent 1px);
   background-size: 54px 54px;
   opacity: 0.35;
   transform: perspective(900px) rotateX(52deg) translateY(45px);
@@ -167,11 +181,39 @@
 .wprice-neon-bg::after {
   opacity: 0.22;
   background-image:
-    radial-gradient(circle at 20% 15%, rgba(255, 60, 0, 0.35), transparent 45%),
-    radial-gradient(circle at 85% 25%, rgba(255, 0, 140, 0.28), transparent 50%),
+    linear-gradient(
+      to bottom,
+      rgba(0, 0, 0, 0) 0%,
+      rgba(0, 0, 0, 0.16) 50%,
+      rgba(0, 0, 0, 0) 100%
+    ),
+    radial-gradient(circle at 18% 10%, rgba(217, 70, 239, 0.42), transparent 45%),
+    radial-gradient(circle at 86% 22%, rgba(255, 214, 0, 0.28), transparent 52%),
     url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20width='120'%20height='120'%3E%3Cfilter%20id='n'%3E%3CfeTurbulence%20type='fractalNoise'%20baseFrequency='.75'%20numOctaves='3'%20stitchTiles='stitch'/%3E%3C/filter%3E%3Crect%20width='120'%20height='120'%20filter='url(%23n)'%20opacity='.55'/%3E%3C/svg%3E");
-  background-size: cover, cover, 240px 240px;
+  background-size: 100% 4px, cover, cover, 240px 240px;
   mix-blend-mode: screen;
+  animation: wprice-crt-flicker 7s infinite;
+}
+
+@keyframes wprice-crt-flicker {
+  0% {
+    opacity: 0.19;
+  }
+  8% {
+    opacity: 0.23;
+  }
+  18% {
+    opacity: 0.21;
+  }
+  35% {
+    opacity: 0.24;
+  }
+  55% {
+    opacity: 0.2;
+  }
+  100% {
+    opacity: 0.21;
+  }
 }
 
 /* Lightweight confetti for raid completion (no external deps). */
