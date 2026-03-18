@@ -1,18 +1,20 @@
-import { defineConfig, globalIgnores } from "eslint/config";
-import nextVitals from "eslint-config-next/core-web-vitals";
-import nextTs from "eslint-config-next/typescript";
+import { defineConfig } from "eslint/config";
+import nextVitals from "eslint-config-next/core-web-vitals.js";
+import nextTs from "eslint-config-next/typescript.js";
 
-const eslintConfig = defineConfig([
-  ...nextVitals,
-  ...nextTs,
-  // Override default ignores of eslint-config-next.
-  globalIgnores([
-    // Default ignores of eslint-config-next:
-    ".next/**",
-    "out/**",
-    "build/**",
-    "next-env.d.ts",
-  ]),
-]);
+const sanitizeExtends = (config) => {
+  if (!config || typeof config !== "object") return config;
+  const cfg = config;
+  if (!Array.isArray(cfg.extends)) return config;
 
-export default eslintConfig;
+  // eslint flat-config compatibility treats `C:\...` as plugin-like input because of `:`.
+  // Strip drive-letter path entries from `extends` and keep plugin entries.
+  const cleanedExtends = cfg.extends.filter((v) => {
+    if (typeof v !== "string") return true;
+    return !/^[a-zA-Z]:\\/.test(v);
+  });
+
+  return { ...config, extends: cleanedExtends };
+};
+
+export default defineConfig([sanitizeExtends(nextVitals), nextTs]);
