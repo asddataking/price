@@ -10,7 +10,7 @@ type Props = {
   trackedItems: number
   lastUpdateText: string
   distanceText: string
-  onRaidHere: () => void
+  onRaidHere?: () => void
 }
 
 export function StoreCard({
@@ -39,13 +39,17 @@ export function StoreCard({
 
       <CardContent className="pt-0">
         <div className="text-sm text-muted-foreground">{lastUpdateText}</div>
-        <Button
-          type="button"
-          className="mt-4 w-full rounded-xl bg-[linear-gradient(90deg,rgba(217,70,239,1),rgba(255,214,0,0.95))] px-4 py-2.5 text-base font-bold text-white shadow-[0_0_18px_rgba(217,70,239,0.35)] hover:opacity-95 active:scale-[0.99] transition"
-          onClick={onRaidHere}
-        >
-          Raid here
-        </Button>
+        {onRaidHere ? (
+          <Button
+            type="button"
+            className="mt-4 w-full rounded-xl bg-[linear-gradient(90deg,rgba(217,70,239,1),rgba(255,214,0,0.95))] px-4 py-2.5 text-base font-bold text-white shadow-[0_0_18px_rgba(217,70,239,0.35)] hover:opacity-95 active:scale-[0.99] transition"
+            onClick={onRaidHere}
+          >
+            Raid here
+          </Button>
+        ) : (
+          <div className="mt-4 text-xs text-muted-foreground">Raids on the raids page</div>
+        )}
       </CardContent>
     </Card>
   )

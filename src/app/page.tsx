@@ -2,6 +2,7 @@ import { headers } from "next/headers"
 import Link from "next/link"
 
 import HomeFeed from "@/components/home/home-feed"
+import WPriceLandingShell from "@/components/branding/WPriceLandingShell"
 import WPriceBrandingShell from "@/components/branding/WPriceBrandingShell"
 import { Button } from "@/components/ui/button"
 import { isNativeMobileUserAgent } from "@/lib/device/isNativeMobile"
@@ -20,14 +21,14 @@ export default async function Home() {
   }
 
   return (
-    <WPriceBrandingShell>
+    <WPriceLandingShell>
       <main className="relative z-10 mx-auto flex min-h-screen max-w-6xl flex-col px-4 py-10">
         <div className="flex flex-1 flex-col gap-14">
           {/* Hero */}
           <div className="grid items-center gap-10 md:grid-cols-2">
             <div className="max-w-xl">
               <div className="inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/5 px-3 py-1.5 text-xs font-semibold text-white/80 backdrop-blur">
-                <span className="inline-block h-2 w-2 rounded-full bg-magenta-400 shadow-[0_0_18px_rgba(217,70,239,0.85)]" />
+                <span className="inline-block h-2 w-2 rounded-full bg-red-500 shadow-[0_0_18px_rgba(255,61,0,0.85)]" />
                 Verified local prices, instantly.
               </div>
 
@@ -42,7 +43,7 @@ export default async function Home() {
               <div className="mt-7 flex flex-col gap-3 sm:flex-row sm:items-center">
                 <Button
                   asChild
-                  className="h-12 rounded-xl bg-[linear-gradient(90deg,rgba(217,70,239,1),rgba(255,214,0,0.95))] px-7 text-base font-bold text-white shadow-[0_0_26px_rgba(217,70,239,0.45)] hover:opacity-95 active:scale-[0.99] transition"
+                  className="h-12 rounded-xl bg-[linear-gradient(90deg,rgba(255,61,0,1),rgba(255,214,0,0.95))] px-7 text-base font-bold text-white shadow-[0_0_26px_rgba(255,61,0,0.25)] hover:opacity-95 active:scale-[0.99] transition"
                 >
                   <Link href="/app">Open the app</Link>
                 </Button>
@@ -61,7 +62,7 @@ export default async function Home() {
                 </li>
                 <li className="flex items-start gap-3">
                   <span className="mt-0.5 inline-flex size-5 items-center justify-center rounded-full bg-white/10 ring-1 ring-white/15">
-                    <span className="inline-block size-2 rounded-full bg-magenta-400 shadow-[0_0_14px_rgba(217,70,239,0.65)]" />
+                    <span className="inline-block size-2 rounded-full bg-red-500 shadow-[0_0_14px_rgba(255,61,0,0.65)]" />
                   </span>
                   Gas + common retail categories (starter).
                 </li>
@@ -76,14 +77,14 @@ export default async function Home() {
 
             {/* Hero imagery */}
             <div className="relative">
-              <div className="absolute -inset-10 bg-[radial-gradient(circle_at_30%_20%,rgba(217,70,239,0.35),transparent_55%),radial-gradient(circle_at_75%_35%,rgba(255,214,0,0.22),transparent_50%)] blur-2xl" />
+              <div className="absolute -inset-10 bg-[radial-gradient(circle_at_30%_20%,rgba(255,61,0,0.30),transparent_55%),radial-gradient(circle_at_75%_35%,rgba(255,214,0,0.22),transparent_50%)] blur-2xl" />
 
-              <div className="relative rounded-3xl border border-white/10 bg-black/35 p-3 shadow-[0_0_45px_rgba(217,70,239,0.12)] backdrop-blur">
+                <div className="relative rounded-3xl border border-white/10 bg-black/35 p-3 shadow-[0_0_45px_rgba(255,61,0,0.12)] backdrop-blur">
                 <div className="rounded-2xl border border-white/10 bg-black/40 p-4">
                   <div className="flex items-center justify-between gap-3">
                     <div className="text-xs font-semibold text-white/70">Preview</div>
                     <div className="flex items-center gap-2">
-                      <span className="inline-block size-2 rounded-full bg-magenta-400" />
+                      <span className="inline-block size-2 rounded-full bg-red-500" />
                       <span className="inline-block size-2 rounded-full bg-yellow-300" />
                       <span className="inline-block size-2 rounded-full bg-cyan-300" />
                     </div>
@@ -240,7 +241,7 @@ export default async function Home() {
                 },
               ].map((t) => (
                 <div key={t.name} className="rounded-2xl border border-white/10 bg-black/25 p-5">
-                  <div className="text-2xl font-black leading-none text-magenta-300/90">“</div>
+                  <div className="text-2xl font-black leading-none text-yellow-200/90">“</div>
                   <div className="mt-2 text-sm leading-relaxed text-white/75 md:text-base">{t.quote}</div>
                   <div className="mt-4">
                     <div className="text-sm font-semibold text-white">{t.name}</div>
@@ -290,7 +291,7 @@ export default async function Home() {
               <div className="flex flex-col gap-3 sm:flex-row">
                 <Button
                   asChild
-                  className="h-12 rounded-xl bg-[linear-gradient(90deg,rgba(217,70,239,1),rgba(255,214,0,0.95))] px-7 text-base font-bold text-white shadow-[0_0_26px_rgba(217,70,239,0.45)] hover:opacity-95 active:scale-[0.99] transition"
+                  className="h-12 rounded-xl bg-[linear-gradient(90deg,rgba(255,61,0,1),rgba(255,214,0,0.95))] px-7 text-base font-bold text-white shadow-[0_0_26px_rgba(255,61,0,0.25)] hover:opacity-95 active:scale-[0.99] transition"
                 >
                   <Link href="/app">Open the app</Link>
                 </Button>
@@ -318,6 +319,6 @@ export default async function Home() {
           </footer>
         </div>
       </main>
-    </WPriceBrandingShell>
+    </WPriceLandingShell>
   )
 }

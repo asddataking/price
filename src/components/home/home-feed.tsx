@@ -6,11 +6,11 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
+import { APIProvider, Map as GoogleMap, AdvancedMarker } from "@vis.gl/react-google-maps"
 import { createSupabaseBrowserClient } from "@/lib/supabase"
 import { distanceMeters } from "@/lib/geo"
 import { BottomNav } from "@/components/navigation/bottom-nav"
 import { PriceCard, type PriceCardConfidence } from "@/components/home/cards/price-card"
-import { RaidCard } from "@/components/home/cards/raid-card"
 import { StoreCard } from "@/components/home/cards/store-card"
 import { ActivityCard } from "@/components/home/cards/activity-card"
 
@@ -38,6 +38,15 @@ type PriceReportRow = {
   verified: boolean
 }
 
+type NearbyPlace = {
+  id: string
+  name: string
+  lat: number
+  lng: number
+  vicinity?: string
+  distanceMeters: number
+}
+
 function minutesAgo(ts: string) {
   const then = new Date(ts).getTime()
   const diffMs = Math.max(0, Date.now() - then)
@@ -62,12 +71,14 @@ export type HomeFeedRenderMode = "live" | "blurred"
 
 type HomeFeedProps = {
   renderMode?: HomeFeedRenderMode
+  googleMapsKey?: string
 }
 
-export default function HomeFeed({ renderMode = "live" }: HomeFeedProps) {
+export default function HomeFeed({ renderMode = "live", googleMapsKey }: HomeFeedProps) {
   const router = useRouter()
   const supabase = React.useMemo(() => createSupabaseBrowserClient(), [])
   const isLive = renderMode === "live"
+  const canRenderMap = isLive && typeof googleMapsKey === "string" && googleMapsKey.trim().length > 0
 
   const [userLocation, setUserLocation] = React.useState<LatLng | null>(
     isLive ? null : { lat: 42.9858, lng: -82.4051 },
@@ -87,6 +98,10 @@ export default function HomeFeed({ renderMode = "live" }: HomeFeedProps) {
   const [recentVerified, setRecentVerified] = React.useState<PriceReportRow[]>([])
 
   const [locationLabel, setLocationLabel] = React.useState("Near You")
+
+  const [nearbyPlaces, setNearbyPlaces] = React.useState<NearbyPlace[]>([])
+  const [nearbyPlacesLoading, setNearbyPlacesLoading] = React.useState(false)
+  const [nearbyPlacesBucket, setNearbyPlacesBucket] = React.useState<string | null>(null)
 
   React.useEffect(() => {
     let cancelled = false
@@ -258,6 +273,88 @@ export default function HomeFeed({ renderMode = "live" }: HomeFeedProps) {
     }
   }, [supabase, userLocation, isLive])
 
+  React.useEffect(() => {
+    if (!isLive) return
+    if (!userLocation) return
+
+    const bucketKey = `${userLocation.lat.toFixed(3)},${userLocation.lng.toFixed(3)}`
+    if (nearbyPlacesBucket === bucketKey) return
+
+    let cancelled = false
+
+    const run = async () => {
+      setNearbyPlacesLoading(true)
+      setNearbyPlaces([])
+      try {
+        const radiusMeters = 3000
+
+        const types: string[] = ["gas_station", "convenience_store", "liquor_store"]
+
+        const responses = await Promise.all(
+          types.map(async (type) => {
+            const res = await fetch("/api/google", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                action: "nearbySearch",
+                params: { lat: userLocation.lat, lng: userLocation.lng, radius: radiusMeters, type },
+              }),
+            })
+            return res.json()
+          }),
+        )
+
+        if (cancelled) return
+
+        const merged: NearbyPlace[] = []
+        const seen = new Set<string>()
+
+        for (const json of responses) {
+          const results = Array.isArray(json?.results) ? (json.results as any[]) : []
+          for (const p of results) {
+            const placeId = typeof p?.place_id === "string" ? p.place_id : null
+            const loc = p?.geometry?.location
+            const lat = typeof loc?.lat === "number" ? loc.lat : null
+            const lng = typeof loc?.lng === "number" ? loc.lng : null
+            const name = typeof p?.name === "string" ? p.name : null
+            if (!placeId || lat == null || lng == null || !name) continue
+            if (seen.has(placeId)) continue
+            seen.add(placeId)
+
+            const distM = distanceMeters(
+              { lat: userLocation.lat, lng: userLocation.lng },
+              { lat, lng },
+            )
+
+            merged.push({
+              id: placeId,
+              name,
+              lat,
+              lng,
+              vicinity: typeof p?.vicinity === "string" ? p.vicinity : undefined,
+              distanceMeters: distM,
+            })
+          }
+        }
+
+        merged.sort((a, b) => a.distanceMeters - b.distanceMeters)
+        setNearbyPlaces(merged.slice(0, 10))
+        setNearbyPlacesBucket(bucketKey)
+      } catch {
+        if (cancelled) return
+        setNearbyPlaces([])
+      } finally {
+        if (cancelled) return
+        setNearbyPlacesLoading(false)
+      }
+    }
+
+    run()
+    return () => {
+      cancelled = true
+    }
+  }, [isLive, userLocation, nearbyPlacesBucket])
+
   const userDistanceByStoreId = React.useMemo(() => {
     if (!userLocation) return {}
     const out: Record<string, number> = {}
@@ -341,19 +438,6 @@ export default function HomeFeed({ renderMode = "live" }: HomeFeedProps) {
       .sort((a, b) => a.price - b.price)
       .slice(0, 6)
   }, [cheapestByStoreId, itemsById, stores, userDistanceByStoreId, userLocation])
-
-  const raidCards = React.useMemo(() => {
-    if (!userLocation) return []
-    return stores
-      .slice()
-      .sort((a, b) => (userDistanceByStoreId[a.id] ?? 0) - (userDistanceByStoreId[b.id] ?? 0))
-      // Make the “Win Raids Nearby” area more compact on the home feed.
-      .slice(0, 2)
-      .map((s) => ({
-        store: s,
-        distanceText: formatDistance(userDistanceByStoreId[s.id] ?? 0),
-      }))
-  }, [stores, userLocation, userDistanceByStoreId])
 
   const storesSection = React.useMemo(() => {
     if (!userLocation) return []
@@ -459,6 +543,87 @@ export default function HomeFeed({ renderMode = "live" }: HomeFeedProps) {
       </div>
 
       <div className="mx-auto max-w-xl space-y-4 px-4 py-4">
+        {/* Nearby map (always shown on Near You / Home). */}
+        <section className="relative overflow-hidden rounded-3xl border border-white/10 bg-card/60 backdrop-blur">
+          <div className="flex items-end justify-between gap-3 px-4 py-3">
+            <div className="min-w-0">
+              <div className="text-base font-semibold">Near you</div>
+              <div className="text-xs text-muted-foreground">Pins are stores (or real nearby places)</div>
+            </div>
+            <Badge
+              variant="secondary"
+              className="rounded-full px-3 py-0.5 text-xs ring-1 ring-magenta-400/30 shadow-[0_0_18px_rgba(217,70,239,0.25)]"
+            >
+              {!loading && hotWins.length > 0 ? "Verified only" : "Nearby places"}
+            </Badge>
+          </div>
+
+          <div className="h-52 sm:h-56">
+            {canRenderMap ? (
+              <APIProvider apiKey={googleMapsKey ?? ""}>
+                <GoogleMap
+                  zoom={13}
+                  center={userLocation ?? { lat: 42.9858, lng: -82.4051 }}
+                  gestureHandling="greedy"
+                  disableDefaultUI
+                  onClick={() => undefined}
+                  mapId="pricedash-map"
+                >
+                  {!loading && hotWins.length > 0
+                    ? stores.map((s) => {
+                        const cheapest = cheapestByStoreId[s.id]
+                        const hasPrice = typeof cheapest?.price === "number"
+                        const pinColor = hasPrice ? "#22c55e" : "#94a3b8"
+                        return (
+                          <AdvancedMarker
+                            key={s.id}
+                            position={{ lat: Number(s.lat), lng: Number(s.lng) }}
+                          >
+                            <div
+                              className="relative -translate-y-1 rounded-full ring-2 ring-white/80 shadow-md"
+                              style={{
+                                width: 34,
+                                height: 34,
+                                background: "rgba(0,0,0,0.25)",
+                                display: "grid",
+                                placeItems: "center",
+                              }}
+                            >
+                              <div
+                                className="rounded-full"
+                                style={{ width: 14, height: 14, background: pinColor }}
+                              />
+                            </div>
+                          </AdvancedMarker>
+                        )
+                      })
+                    : nearbyPlaces.map((p) => (
+                        <AdvancedMarker key={p.id} position={{ lat: p.lat, lng: p.lng }}>
+                          <div
+                            className="relative -translate-y-1 rounded-full ring-2 ring-white/80 shadow-md"
+                            style={{
+                              width: 32,
+                              height: 32,
+                              background: "rgba(0,0,0,0.25)",
+                              display: "grid",
+                              placeItems: "center",
+                            }}
+                          >
+                            <div
+                              className="rounded-full"
+                              style={{ width: 12, height: 12, background: "#f59e0b" }}
+                            />
+                          </div>
+                        </AdvancedMarker>
+                      ))}
+                </GoogleMap>
+              </APIProvider>
+            ) : (
+              <div className="h-full animate-pulse bg-muted/40" />
+            )}
+          </div>
+        </section>
+
         <section className="space-y-3">
           <div className="flex items-end justify-between gap-3">
             <div>
@@ -488,7 +653,44 @@ export default function HomeFeed({ renderMode = "live" }: HomeFeedProps) {
             <div className="space-y-3">
               {hotWins.length === 0 ? (
                 <div className="rounded-xl border bg-card/60 p-4 text-sm text-muted-foreground">
-                  No verified deals in range yet. Check back soon.
+                  <div className="font-medium text-foreground">No verified deals yet.</div>
+                  <div className="mt-1 text-xs text-muted-foreground">
+                    {nearbyPlacesLoading
+                      ? "Finding nearby places..."
+                      : nearbyPlaces.length > 0
+                        ? "Here are real nearby places you can start reporting prices for."
+                        : "No cached places yet—try again in a moment."}
+                  </div>
+
+                  {nearbyPlacesLoading ? (
+                    <div className="mt-3 space-y-2">
+                      {Array.from({ length: 4 }).map((_, idx) => (
+                        <div key={idx} className="h-6 w-full animate-pulse rounded-lg bg-muted/40" />
+                      ))}
+                    </div>
+                  ) : nearbyPlaces.length > 0 ? (
+                    <div className="mt-3 space-y-2">
+                      {nearbyPlaces.slice(0, 5).map((p) => (
+                        <div
+                          key={p.id}
+                          className="flex items-center justify-between gap-3 rounded-lg border border-white/10 bg-card/50 px-3 py-2"
+                        >
+                          <div className="min-w-0">
+                            <div className="truncate text-sm font-medium">{p.name}</div>
+                            <div className="text-[11px] text-muted-foreground">
+                              {formatDistance(p.distanceMeters)}
+                            </div>
+                          </div>
+                          <Badge
+                            variant="outline"
+                            className="rounded-full px-2 text-[11px] ring-1 ring-yellow-300/20 shadow-[0_0_18px_rgba(255,214,0,0.12)]"
+                          >
+                            Nearby
+                          </Badge>
+                        </div>
+                      ))}
+                    </div>
+                  ) : null}
                 </div>
               ) : (
                 hotWins.map((d) => {
@@ -504,8 +706,6 @@ export default function HomeFeed({ renderMode = "live" }: HomeFeedProps) {
                       distanceText={formatDistance(d.distanceMeters)}
                       verified={d.verified}
                       confidence={confidence}
-                      onPrimaryAction={() => router.push(`/raid/${d.store.id}`)}
-                      primaryActionLabel="Start Raid"
                     />
                   )
                 })
@@ -517,33 +717,33 @@ export default function HomeFeed({ renderMode = "live" }: HomeFeedProps) {
         <section className="space-y-3">
           <div className="flex items-end justify-between gap-3">
             <div>
-              <div className="text-base font-semibold">⚡ Win Raids Nearby</div>
-              <div className="text-xs text-muted-foreground">Earn points by snapping receipts</div>
+              <div className="text-base font-semibold">🏆 Win Raids</div>
+              <div className="text-xs text-muted-foreground">Snap receipts, earn points, improve prices</div>
             </div>
             <Badge
               variant="outline"
               className="rounded-full px-3 py-0.5 text-xs ring-1 ring-yellow-300/20 shadow-[0_0_18px_rgba(255,214,0,0.18)]"
             >
-              8 snaps • 3 steps
+              Community mode
             </Badge>
           </div>
 
-          <div className="space-y-3">
-            {isLive
-              ? raidCards.map((c) => (
-                  <RaidCard
-                    key={c.store.id}
-                    storeName={c.store.name}
-                    rewardPoints={150}
-                    distanceText={c.distanceText}
-                    captureCopy="Capture 8 snaps (3 steps)"
-                    onStartRaid={() => router.push(`/raid/${c.store.id}`)}
-                  />
-                ))
-              : Array.from({ length: 2 }).map((_, idx) => (
-                  <Card key={idx} className="h-24 w-full animate-pulse bg-muted/40" />
-                ))}
-          </div>
+          <Card className="rounded-2xl border border-white/10 bg-card/60 p-4 shadow-sm">
+            <div className="flex items-center justify-between gap-3">
+              <div className="min-w-0">
+                <div className="text-sm font-medium">Start a raid nearby</div>
+                <div className="mt-1 text-xs text-muted-foreground">Pick a store and go. Verified only.</div>
+              </div>
+              <Button
+                type="button"
+                className="rounded-xl bg-[linear-gradient(90deg,rgba(217,70,239,1),rgba(255,214,0,0.95))] px-5 py-2 text-base font-bold text-white shadow-[0_0_18px_rgba(217,70,239,0.35)] hover:opacity-95 active:scale-[0.99] transition"
+                onClick={() => router.push("/raids")}
+                disabled={!isLive}
+              >
+                See Raids
+              </Button>
+            </div>
+          </Card>
         </section>
 
         <section className="space-y-3">
@@ -566,7 +766,6 @@ export default function HomeFeed({ renderMode = "live" }: HomeFeedProps) {
                     trackedItems={x.tracked}
                     lastUpdateText={x.lastUpdateText}
                     distanceText={x.distanceText}
-                    onRaidHere={() => router.push(`/raid/${x.s.id}`)}
                   />
                 ))
               : Array.from({ length: 4 }).map((_, idx) => (
@@ -598,7 +797,6 @@ export default function HomeFeed({ renderMode = "live" }: HomeFeedProps) {
                       price={Number(row.price)}
                       lastWdnMinutesAgo={minutesAgo(row.reported_at)}
                       distanceText={formatDistance(distM)}
-                      onClick={() => router.push(`/raid/${store.id}`)}
                     />
                   )
                 })
