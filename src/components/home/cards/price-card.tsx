@@ -19,6 +19,7 @@ type Props = {
   distanceText: string
   verified: boolean
   confidence: PriceCardConfidence
+  recommended?: boolean
   onPrimaryAction?: () => void
   primaryActionLabel?: string
 }
@@ -31,6 +32,7 @@ export function PriceCard({
   distanceText,
   verified,
   confidence,
+  recommended,
   onPrimaryAction,
   primaryActionLabel,
 }: Props) {
@@ -38,6 +40,14 @@ export function PriceCard({
     <Card className="w-full border border-white/20 bg-card/80 py-4 shadow-sm transition hover:-translate-y-0.5 hover:shadow-[0_0_24px_rgba(217,70,239,0.25)] active:scale-[0.99] duration-150">
       <CardHeader className="pb-3">
         <div className="flex flex-wrap items-center gap-2">
+          {recommended ? (
+            <Badge
+              variant="secondary"
+              className="rounded-full px-2 py-0.5 text-[11px] font-semibold bg-magenta-500/15 text-magenta-200 dark:text-magenta-200"
+            >
+              Recommended
+            </Badge>
+          ) : null}
           <Badge
             variant="secondary"
             className={cn("rounded-full px-2 py-0.5 text-[11px] font-semibold", confidence.className ?? "")}

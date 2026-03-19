@@ -13,10 +13,8 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { toast } from "sonner"
 import { createSupabaseBrowserClient } from "@/lib/supabase"
-import { Plus } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { UserMenu } from "@/components/auth/user-menu"
-import ReportSheet from "@/components/reports/report-sheet"
 
 type LatLng = { lat: number; lng: number }
 
@@ -36,18 +34,12 @@ type ItemRow = {
   variants: string[]
 }
 
-type PriceReportRow = {
-  id: string
+type StoreBestSnapshotRow = {
   store_id: string
   item_id: string
-  price: string | number
-  reported_at: string
-  reporter_id: string
-  photo_url: string
-  lat: string | number
-  lng: string | number
-  verified: boolean
-  created_at: string
+  best_price: string | number
+  best_observed_at: string
+  is_stale?: boolean
 }
 
 function useStableToastId(prefix: string) {
@@ -165,8 +157,6 @@ export default function HomeMap({ googleMapsKey }: { googleMapsKey: string }) {
 
   const toastId = useStableToastId("price-updates")
 
-  const [reportOpen, setReportOpen] = React.useState(false)
-
   const [itemsById, setItemsById] = React.useState<Record<string, ItemRow>>({})
   const [cheapestByStoreId, setCheapestByStoreId] = React.useState<
     Record<
@@ -251,16 +241,11 @@ export default function HomeMap({ googleMapsKey }: { googleMapsKey: string }) {
         return
       }
 
-      // We only care about recent-ish verified reports for a responsive UI.
-      const cutoff = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString()
-
       const { data, error } = await supabase
-        .from("price_reports")
-        .select("store_id,item_id,price,reported_at,verified")
-        .in("store_id", storeIds)
-        .eq("verified", true)
-        .gte("reported_at", cutoff)
-        .order("reported_at", { ascending: false })
+        .from("retail_location_products")
+        .select("retail_location_id,product_id,price,last_observed_at,verification_type,is_live,is_stale,fuel_type")
+        .in("retail_location_id", storeIds)
+        .order("last_observed_at", { ascending: false })
 
       if (error) {
         toast.error("Failed to load prices.")
@@ -272,17 +257,26 @@ export default function HomeMap({ googleMapsKey }: { googleMapsKey: string }) {
         { price: number; reportedAt: string; itemId: string; verified: boolean }
       > = {}
 
-      for (const row of (data ?? []) as PriceReportRow[]) {
-        const storeId = row.store_id
+      for (const row of (data ?? []) as Array<{
+        retail_location_id: string
+        product_id: string
+        price: string | number
+        last_observed_at: string
+        verification_type: string
+      }>) {
+        const storeId = row.retail_location_id
         const existing = next[storeId]
 
-        // For the marker, we want the cheapest price seen for that store in the time window.
-        if (!existing || Number(row.price) < existing.price) {
+        const rowPrice = Number(row.price)
+        if (!Number.isFinite(rowPrice)) continue
+
+        // For the marker, we want the cheapest last-known price for that store.
+        if (!existing || rowPrice < existing.price) {
           next[storeId] = {
-            price: Number(row.price),
-            reportedAt: row.reported_at,
-            itemId: row.item_id,
-            verified: row.verified,
+            price: rowPrice,
+            reportedAt: row.last_observed_at,
+            itemId: row.product_id,
+            verified: String(row.verification_type ?? "").includes("api"),
           }
         }
       }
@@ -344,85 +338,8 @@ export default function HomeMap({ googleMapsKey }: { googleMapsKey: string }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bounds, fetchStoresInBounds, fetchCheapestInView])
 
-  // Realtime: update pins on new verified reports.
-  React.useEffect(() => {
-    if (!supabase) return
-    let channel: any | null = null
-    let cancelled = false
-
-    const start = async () => {
-      channel = supabase
-        .channel("price-dash-realtime")
-        .on(
-          "postgres_changes",
-          {
-            event: "*",
-            schema: "public",
-            table: "price_reports",
-          },
-          async (payload: any) => {
-            if (cancelled) return
-            const newRow = payload?.new as PriceReportRow | undefined
-            if (!newRow?.store_id) return
-            if (newRow.verified !== true) return
-
-            // Best-effort refresh: only recompute for currently visible store IDs.
-            const storeIds = stores.map((s) => s.id)
-            if (!storeIds.includes(newRow.store_id)) return
-
-            await fetchCheapestInView(storeIds)
-            const storeName = stores.find((s) => s.id === newRow.store_id)?.name ?? "a store"
-            toast.success(`Squad just W'd verified prices at ${storeName}!`)
-          },
-        )
-        .subscribe()
-    }
-
-    start()
-
-    return () => {
-      cancelled = true
-      channel?.unsubscribe()
-    }
-  }, [fetchCheapestInView, supabase, stores])
-
   const activeStoreId = hoverStoreId ?? selectedStoreId
-  const defaultReportStoreId = activeStoreId ?? (stores[0]?.id ?? null)
-
-  const onOptimisticReport = React.useCallback(
-    (payload: {
-      storeId: string
-      itemId: string
-      price: number
-      reportedAtISO: string
-      verified: boolean
-    }) => {
-      if (!payload.verified) return
-
-      setCheapestByStoreId((prev) => {
-        const existing = prev[payload.storeId]
-        if (existing && payload.price >= existing.price) return prev
-
-        return {
-          ...prev,
-          [payload.storeId]: {
-            price: payload.price,
-            reportedAt: payload.reportedAtISO,
-            itemId: payload.itemId,
-            verified: true,
-          },
-        }
-      })
-    },
-    [],
-  )
-
-  const refreshCheapest = React.useCallback(
-    async (storeIds: string[]) => {
-      await fetchCheapestInView(storeIds)
-    },
-    [fetchCheapestInView],
-  )
+  // MVP snapshot-driven UI: no realtime "report new price" updates.
 
   const storeCheapestPrices = stores
     .map((s) => cheapestByStoreId[s.id]?.price)
@@ -434,14 +351,14 @@ export default function HomeMap({ googleMapsKey }: { googleMapsKey: string }) {
   const dealsCard = (
     <Card className="border bg-background/80 backdrop-blur">
       <CardHeader className="pb-3">
-        <CardTitle className="text-base">Nearby verified deals</CardTitle>
+        <CardTitle className="text-base">Nearby best deals</CardTitle>
       </CardHeader>
       <CardContent className="space-y-3">
         {stores.length === 0 ? (
           <div className="text-sm text-muted-foreground">Loading nearby stores...</div>
         ) : stores.length > 0 && Object.keys(cheapestByStoreId).length === 0 ? (
           <div className="text-sm text-muted-foreground">
-            No verified prices yet in this area. Be the first to report with photo proof.
+            No snapshot prices yet in this area. Try again after ingestion runs.
           </div>
         ) : null}
 
@@ -476,13 +393,9 @@ export default function HomeMap({ googleMapsKey }: { googleMapsKey: string }) {
                       ${cheapest?.price?.toFixed(2)}
                     </div>
                     <div className="mt-1 flex items-center justify-end gap-2">
-                      {cheapest?.verified ? (
-                        <Badge variant="default" className="bg-emerald-600 hover:bg-emerald-600">
-                          Verified
-                        </Badge>
-                      ) : (
-                        <Badge variant="secondary">Unverified</Badge>
-                      )}
+                      <Badge variant="default" className="bg-emerald-600 hover:bg-emerald-600">
+                        Snapshot
+                      </Badge>
                     </div>
                   </div>
                 </div>
@@ -555,13 +468,9 @@ export default function HomeMap({ googleMapsKey }: { googleMapsKey: string }) {
                                 {item?.name ?? "No item price"} • {reportAge}
                               </div>
                             </div>
-                            {cheapest?.verified ? (
-                              <Badge variant="default" className="bg-emerald-600 hover:bg-emerald-600">
-                                Verified
-                              </Badge>
-                            ) : (
-                              <Badge variant="secondary">No verified</Badge>
-                            )}
+                            <Badge variant="default" className="bg-emerald-600 hover:bg-emerald-600">
+                              Snapshot
+                            </Badge>
                           </div>
                           <div className="mt-3 flex items-center justify-between">
                             <div className="text-sm text-muted-foreground">Current cheapest</div>
@@ -587,22 +496,14 @@ export default function HomeMap({ googleMapsKey }: { googleMapsKey: string }) {
                   Enable the Google Maps API key to see pins
                 </div>
                 <div className="mt-3 text-sm text-muted-foreground">
-                  You can still browse verified deals and submit reports.
+                  You can still browse best deals. Reporting is hidden in this MVP.
                 </div>
               </div>
             </div>
           </div>
         )}
 
-        <div className="absolute bottom-6 right-6" style={{ zIndex: 100000 }}>
-          <Button
-            type="button"
-            className="size-14 rounded-full shadow-lg"
-            onClick={() => setReportOpen(true)}
-          >
-            <Plus className="size-5" />
-          </Button>
-        </div>
+        {/* Reporting is intentionally hidden in snapshots MVP. */}
       </div>
 
       {/* Deals card under the map (app-like stack). */}
@@ -610,15 +511,7 @@ export default function HomeMap({ googleMapsKey }: { googleMapsKey: string }) {
         <div className="mx-auto w-full max-w-xl">{dealsCard}</div>
       </div>
 
-      <ReportSheet
-        open={reportOpen}
-        onOpenChange={setReportOpen}
-        defaultStoreId={defaultReportStoreId}
-        stores={stores}
-        itemsById={itemsById}
-        onOptimisticReport={onOptimisticReport}
-        onRefreshCheapest={refreshCheapest}
-      />
+      {/* Reporting sheet removed for snapshots MVP. */}
     </div>
   )
 }

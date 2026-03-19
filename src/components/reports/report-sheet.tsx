@@ -47,6 +47,15 @@ type Props = {
 
 const RECEIPTS_MAX_DISTANCE_METERS = 1200
 
+function timeBucketFromLocalTime(now: Date = new Date()): "morning" | "lunch" | "evening" | "night" {
+  const h = now.getHours()
+  // Lightweight time-of-day buckets to make the feed feel situational.
+  if (h >= 5 && h < 11) return "morning"
+  if (h >= 11 && h < 15) return "lunch"
+  if (h >= 15 && h < 21) return "evening"
+  return "night"
+}
+
 function getCurrentPosition() {
   return new Promise<GeolocationPosition>((resolve, reject) => {
     if (!navigator.geolocation) {
@@ -150,6 +159,41 @@ export default function ReportSheet({
     return itemsById[itemId] ?? null
   }, [itemId, itemsById])
 
+  const recordItemIntent = React.useCallback(
+    async (intentItemId: string) => {
+      try {
+        const { data: userData, error: userError } = await supabase.auth.getUser()
+        if (userError || !userData?.user) return
+
+        const bucket = timeBucketFromLocalTime()
+
+        // MVP approach: read-modify-write for count increment.
+        const { data: existing } = await supabase
+          .from("user_item_preferences")
+          .select("count")
+          .eq("user_id", userData.user.id)
+          .eq("item_id", intentItemId)
+          .eq("time_bucket", bucket)
+          .maybeSingle()
+
+        const nextCount = (existing?.count ?? 0) + 1
+
+        await supabase.from("user_item_preferences").upsert(
+          {
+            user_id: userData.user.id,
+            item_id: intentItemId,
+            time_bucket: bucket,
+            count: nextCount,
+          },
+          { onConflict: "user_id,item_id,time_bucket" },
+        )
+      } catch {
+        // Intent tracking is non-critical; ignore failures.
+      }
+    },
+    [supabase],
+  )
+
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent side="bottom" className="p-0">
@@ -195,6 +239,9 @@ export default function ReportSheet({
                           key={it.id}
                           onSelect={() => {
                             setItemId(it.id)
+                            // Track user intent as soon as they select an item.
+                            // Do not block the UI on this network call.
+                            void recordItemIntent(it.id)
                           }}
                           value={it.name}
                           aria-selected={it.id === itemId}

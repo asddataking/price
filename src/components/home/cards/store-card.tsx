@@ -48,7 +48,7 @@ export function StoreCard({
             Raid here
           </Button>
         ) : (
-          <div className="mt-4 text-xs text-muted-foreground">Raids on the raids page</div>
+          <div className="mt-4 text-xs text-muted-foreground">Save items to personalize your picks</div>
         )}
       </CardContent>
     </Card>

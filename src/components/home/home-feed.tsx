@@ -10,6 +10,7 @@ import { APIProvider, Map as GoogleMap, AdvancedMarker } from "@vis.gl/react-goo
 import { createSupabaseBrowserClient } from "@/lib/supabase"
 import { distanceMeters } from "@/lib/geo"
 import { BottomNav } from "@/components/navigation/bottom-nav"
+import PremiumHomeUI from "@/components/home/premium-home-ui"
 import { PriceCard, type PriceCardConfidence } from "@/components/home/cards/price-card"
 import { StoreCard } from "@/components/home/cards/store-card"
 import { ActivityCard } from "@/components/home/cards/activity-card"
@@ -48,6 +49,37 @@ type NearbyPlace = {
 }
 
 type NearbyCategory = "all" | "gas" | "tobacco" | "liquor" | "grocery"
+
+type SearchOffer = {
+  store: {
+    id: string
+    name: string
+    lat: number
+    lng: number
+    address?: string | null
+    category?: string | null
+  }
+  item: {
+    id: string
+    name: string
+    category?: string | null
+  }
+  price: number
+  observedAt: string
+  distanceMeters: number
+  source: "snapshot" | "kroger"
+  verificationType?: string
+}
+
+type RecentSearchChip = {
+  query: string
+  bestPrice?: number
+}
+
+type UserItemPreferenceRow = {
+  item_id: string
+  count: number
+}
 
 function nearbyCategoryLabel(c: NearbyCategory) {
   switch (c) {
@@ -97,6 +129,27 @@ function formatDistance(meters: number) {
   return `${Math.round(miles)}mi`
 }
 
+function timeBucketFromLocalTime(now: Date = new Date()): "morning" | "lunch" | "evening" | "night" {
+  const h = now.getHours()
+  if (h >= 5 && h < 11) return "morning"
+  if (h >= 11 && h < 15) return "lunch"
+  if (h >= 15 && h < 21) return "evening"
+  return "night"
+}
+
+function timeBucketLabel(b: "morning" | "lunch" | "evening" | "night") {
+  switch (b) {
+    case "morning":
+      return "Morning"
+    case "lunch":
+      return "Lunch"
+    case "evening":
+      return "Evening"
+    default:
+      return "Night"
+  }
+}
+
 function confidenceBadgeFromMinutes(m: number): PriceCardConfidence {
   if (m <= 120) return { label: "Hot", className: "bg-red-600/15 text-red-700 dark:text-red-400" }
   if (m <= 24 * 60) return { label: "Fresh", className: "bg-emerald-600/15 text-emerald-700 dark:text-emerald-400" }
@@ -124,12 +177,56 @@ export default function HomeFeed({ renderMode = "live", googleMapsKey }: HomeFee
   const [locationError, setLocationError] = React.useState<string | null>(null)
   const [loading, setLoading] = React.useState(true)
 
+  const [searchQuery, setSearchQuery] = React.useState("")
+  const [searchLoading, setSearchLoading] = React.useState(false)
+  const [searchOffers, setSearchOffers] = React.useState<SearchOffer[]>([])
+
+  const [recentSearchInsight, setRecentSearchInsight] = React.useState<string | null>(null)
+  const [recentSearches, setRecentSearches] = React.useState<RecentSearchChip[]>([])
+  const [recentServerSearches, setRecentServerSearches] = React.useState<RecentSearchChip[]>([])
+
+  const [retailerFilter, setRetailerFilter] = React.useState<string>("all")
+  const [mapExpanded, setMapExpanded] = React.useState(false)
+
+  const [userId, setUserId] = React.useState<string | null>(null)
+  const [timeBucket, setTimeBucket] = React.useState<"morning" | "lunch" | "evening" | "night">(() =>
+    timeBucketFromLocalTime(),
+  )
+  const [recommendedItems, setRecommendedItems] = React.useState<UserItemPreferenceRow[]>([])
+  const [preferencesLoading, setPreferencesLoading] = React.useState(false)
+
+  React.useEffect(() => {
+    if (typeof window === "undefined") return
+    const key = "wprice:recent-searches:v1"
+    try {
+      const raw = window.localStorage.getItem(key)
+      if (!raw) return
+      const parsed = JSON.parse(raw) as unknown
+      if (!Array.isArray(parsed)) return
+      const next = parsed
+        .filter((r) => typeof (r as any)?.query === "string" && String((r as any).query).trim().length > 0)
+        .map((r) => ({
+          query: String((r as any).query).trim(),
+          bestPrice: typeof (r as any)?.bestPrice === "number" ? (r as any).bestPrice : undefined,
+        }))
+        .slice(0, 6)
+      setRecentSearches(next)
+    } catch {
+      // Ignore corrupted localStorage.
+    }
+  }, [])
+
   const [stores, setStores] = React.useState<StoreRow[]>([])
   const [itemsById, setItemsById] = React.useState<Record<string, ItemRow>>({})
 
   const [cheapestByStoreId, setCheapestByStoreId] = React.useState<
-    Record<string, { price: number; reportedAt: string; itemId: string; verified: boolean }>
+    Record<
+      string,
+      { price: number; reportedAt: string; itemId: string; verified: boolean; verificationType: string }
+    >
   >({})
+
+  const [storeAffinityByStoreId, setStoreAffinityByStoreId] = React.useState<Record<string, number>>({})
 
   const [recentVerified, setRecentVerified] = React.useState<PriceReportRow[]>([])
 
@@ -179,6 +276,93 @@ export default function HomeFeed({ renderMode = "live", googleMapsKey }: HomeFee
     }
   }, [locationMode, isLive])
 
+  // Keep time-bucket picks in sync without a full reload.
+  React.useEffect(() => {
+    if (!isLive) return
+    let cancelled = false
+
+    const update = () => {
+      if (cancelled) return
+      setTimeBucket(timeBucketFromLocalTime())
+    }
+
+    update()
+    const intervalId = window.setInterval(update, 5 * 60 * 1000)
+    return () => {
+      cancelled = true
+      window.clearInterval(intervalId)
+    }
+  }, [isLive])
+
+  // Identify current user for preference-based picks.
+  React.useEffect(() => {
+    if (!isLive) return
+    let cancelled = false
+
+    const run = async () => {
+      const { data, error } = await supabase.auth.getUser()
+      if (cancelled) return
+      if (error || !data?.user) {
+        setUserId(null)
+        return
+      }
+      setUserId(data.user.id)
+    }
+
+    void run()
+    return () => {
+      cancelled = true
+    }
+  }, [isLive, supabase])
+
+  // Load the user's top picked items for the current time bucket.
+  React.useEffect(() => {
+    if (!isLive) return
+    if (!userId) {
+      setRecommendedItems([])
+      return
+    }
+
+    let cancelled = false
+
+    const run = async () => {
+      setPreferencesLoading(true)
+      try {
+        const { data, error } = await supabase
+          .from("user_item_preferences")
+          .select("item_id,count")
+          .eq("user_id", userId)
+          .eq("time_bucket", timeBucket)
+          .order("count", { ascending: false })
+          .limit(5)
+
+        if (cancelled) return
+        if (error || !Array.isArray(data)) {
+          setRecommendedItems([])
+          return
+        }
+
+        const rows = data as Array<any>
+        setRecommendedItems(
+          rows
+            .filter((r) => typeof r?.item_id === "string")
+            .map((r) => ({
+              item_id: r.item_id as string,
+              count: Number.isFinite(r?.count) ? Number(r.count) : Number(r?.count ?? 0),
+            }))
+            .filter((r) => Number.isFinite(r.count) && r.count > 0),
+        )
+      } finally {
+        if (!cancelled) setPreferencesLoading(false)
+      }
+    }
+
+    void run()
+    return () => {
+      cancelled = true
+    }
+  }, [isLive, supabase, userId, timeBucket])
+
   async function resolveManualLocation() {
     if (!isLive) return
     const address = manualLocationInput.trim()
@@ -223,6 +407,136 @@ export default function HomeFeed({ renderMode = "live", googleMapsKey }: HomeFee
     }
   }
 
+  async function runExactSearch(query: string) {
+    if (!isLive) return
+    const q = query.trim()
+    if (!q) return
+
+    const lat = userLocation?.lat ?? 42.9858
+    const lng = userLocation?.lng ?? -82.4051
+
+    setSearchLoading(true)
+    setSearchOffers([])
+    setRecentSearchInsight(null)
+
+    try {
+      const normalized = q.toLowerCase()
+      const prevLocal = recentSearches.find((r) => r.query.trim().toLowerCase() === normalized)
+      const prevBest = typeof prevLocal?.bestPrice === "number" ? prevLocal.bestPrice : null
+
+      const res = await fetch("/api/search/offers", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ query: q, lat, lng, limit: 12 }),
+      })
+
+      const json = await res.json().catch(() => ({}))
+
+      if (!res.ok) {
+        throw new Error(typeof json?.error === "string" ? json.error : "Search failed.")
+      }
+
+      const offers = Array.isArray(json?.offers) ? (json.offers as SearchOffer[]) : []
+      setSearchOffers(offers)
+
+      const best = offers[0]
+      if (!best) return
+      const currentBestPrice = Number(best.price)
+      if (!Number.isFinite(currentBestPrice)) return
+
+      if (prevBest != null && prevBest > currentBestPrice) {
+        const delta = prevBest - currentBestPrice
+        setRecentSearchInsight(`$${delta.toFixed(2)} cheaper nearby`)
+      }
+
+      setRecentSearches((prev) => {
+        const next = prev.filter((r) => r.query.trim().toLowerCase() !== normalized)
+        next.unshift({ query: q, bestPrice: currentBestPrice })
+        const sliced = next.slice(0, 6)
+        if (typeof window !== "undefined") {
+          window.localStorage.setItem("wprice:recent-searches:v1", JSON.stringify(sliced))
+        }
+        return sliced
+      })
+    } catch {
+      // Search is non-critical; ignore failures.
+      setSearchOffers([])
+    } finally {
+      setSearchLoading(false)
+    }
+  }
+
+  function onQuickAction(key: string) {
+    if (!isLive) return
+
+    if (key === "near_me") {
+      setLocationMode("phone")
+      setMapExpanded(true)
+      if (typeof window !== "undefined") {
+        window.scrollTo({ top: 0, behavior: "smooth" })
+      }
+      return
+    }
+
+    if (key === "morning_boost") {
+      setNearbyCategory("all")
+      document.getElementById("morning-boost")?.scrollIntoView({ behavior: "smooth", block: "start" })
+      return
+    }
+
+    if (key === "lunch_deals") {
+      setNearbyCategory("grocery")
+      document.getElementById("lunch-near-you")?.scrollIntoView({ behavior: "smooth", block: "start" })
+      return
+    }
+
+    if (key === "grocery_staples") {
+      setNearbyCategory("grocery")
+      document.getElementById("grocery-staples")?.scrollIntoView({ behavior: "smooth", block: "start" })
+      return
+    }
+  }
+
+  function onDealTapRaid(storeId: string, itemId?: string) {
+    // Optimistically navigate; preference writes are best-effort.
+    void router.push(`/raid/${storeId}`)
+
+    if (!isLive) return
+    if (!userId) return
+    if (!itemId) return
+
+    void (async () => {
+      try {
+        const { data: existing, error } = await supabase
+          .from("user_item_preferences")
+          .select("count")
+          .eq("user_id", userId)
+          .eq("item_id", itemId)
+          .eq("time_bucket", timeBucket)
+          .maybeSingle()
+
+        if (error) return
+        const existingCount = existing?.count ?? 0
+
+        await supabase.from("user_item_preferences").upsert(
+          {
+            user_id: userId,
+            item_id: itemId,
+            time_bucket: timeBucket,
+            count: existingCount + 1,
+          },
+          { onConflict: "user_id,item_id,time_bucket" },
+        )
+      } catch {
+        // Non-critical; ignore writes if the user is offline/unauthenticated.
+      }
+    })()
+  }
+
+  function onSignUp() {
+    void router.push("/auth/signup")
+  }
+
   React.useEffect(() => {
     let cancelled = false
     if (!userLocation) return
@@ -260,48 +574,87 @@ export default function HomeFeed({ renderMode = "live", googleMapsKey }: HomeFee
       if (storeIds.length === 0) {
         setCheapestByStoreId({})
         setRecentVerified([])
+        setStoreAffinityByStoreId({})
         setLoading(false)
         return
       }
 
-      // Hot wins = cheapest verified price seen in last 30 days.
-      const cutoff = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString()
-      const { data: hotRows } = await supabase
-        .from("price_reports")
-        .select("store_id,item_id,price,reported_at,verified")
-        .in("store_id", storeIds)
-        .eq("verified", true)
-        .gte("reported_at", cutoff)
-        .order("reported_at", { ascending: false })
+      // Optional personalization: reorder by per-store affinity (logged-in only).
+      if (userId) {
+        const { data: affinityRows, error: affinityErr } = await supabase
+          .from("user_store_affinity")
+          .select("retail_location_id,affinity_score")
+          .eq("user_id", userId)
+          .in("retail_location_id", storeIds)
+          .order("affinity_score", { ascending: false })
+          .limit(50)
+
+        if (!affinityErr) {
+          const m: Record<string, number> = {}
+          for (const r of (affinityRows ?? []) as Array<any>) {
+            const sid = r.retail_location_id as string
+            const score = Number(r.affinity_score)
+            if (!sid) continue
+            if (!Number.isFinite(score)) continue
+            m[sid] = score
+          }
+          setStoreAffinityByStoreId(m)
+        }
+      } else {
+        setStoreAffinityByStoreId({})
+      }
+
+      // Hot wins = cheapest tracked last-known price for each nearby store.
+      const { data: trackingRowsRaw } = await supabase
+        .from("retail_location_products")
+        .select("retail_location_id,product_id,price,last_observed_at,verification_type,is_live,is_stale")
+        .in("retail_location_id", storeIds)
+        .order("last_observed_at", { ascending: false })
+        .limit(500)
 
       if (cancelled) return
+      const trackingRows = Array.isArray(trackingRowsRaw) ? trackingRowsRaw : []
+
       const nextCheapest: typeof cheapestByStoreId = {}
-      for (const row of (hotRows ?? []) as PriceReportRow[]) {
-        const storeId = row.store_id
+      for (const row of trackingRows as Array<any>) {
+        const storeId = row.retail_location_id as string
         const p = Number(row.price)
+        if (!Number.isFinite(p)) continue
+
         const existing = nextCheapest[storeId]
-        if (!existing || (Number.isFinite(p) && p < existing.price)) {
+        const reportedAt = row.last_observed_at as string
+        const verified = String(row.verification_type ?? "").includes("api")
+        const verificationType = String(row.verification_type ?? "")
+        const existingReportedAtMs = existing?.reportedAt ? new Date(existing.reportedAt).getTime() : 0
+        const rowReportedAtMs = reportedAt ? new Date(reportedAt).getTime() : 0
+
+        if (!existing || p < existing.price || (p === existing.price && rowReportedAtMs > existingReportedAtMs)) {
           nextCheapest[storeId] = {
             price: p,
-            reportedAt: row.reported_at,
-            itemId: row.item_id,
-            verified: row.verified,
+            reportedAt,
+            itemId: row.product_id,
+            verified,
+            verificationType,
           }
         }
       }
       setCheapestByStoreId(nextCheapest)
 
-      // Recent verified feed (social proof).
-      const { data: recentRows } = await supabase
-        .from("price_reports")
-        .select("store_id,item_id,price,reported_at,verified")
-        .in("store_id", storeIds)
-        .eq("verified", true)
-        .order("reported_at", { ascending: false })
-        .limit(24)
+      // Recent tracked feed (used as “activity” in the UI).
+      const recentRows = trackingRows
+        .slice()
+        .sort((a, b) => new Date(b.last_observed_at).getTime() - new Date(a.last_observed_at).getTime())
+        .slice(0, 24)
+        .map((r) => ({
+          store_id: r.retail_location_id,
+          item_id: r.product_id,
+          price: r.price,
+          reported_at: r.last_observed_at,
+          verified: String(r.verification_type ?? "").includes("api"),
+        })) as PriceReportRow[]
 
       if (cancelled) return
-      setRecentVerified((recentRows ?? []) as PriceReportRow[])
+      setRecentVerified(recentRows)
       setLoading(false)
     }
 
@@ -309,7 +662,7 @@ export default function HomeFeed({ renderMode = "live", googleMapsKey }: HomeFee
     return () => {
       cancelled = true
     }
-  }, [supabase, userLocation, isLive])
+  }, [supabase, userLocation, isLive, userId])
 
   React.useEffect(() => {
     if (!isLive) return
@@ -458,6 +811,7 @@ export default function HomeFeed({ renderMode = "live", googleMapsKey }: HomeFee
       reportedAt: string
       distanceMeters: number
       verified: boolean
+        verificationType: string
     }> = []
 
     for (const s of stores) {
@@ -473,14 +827,53 @@ export default function HomeFeed({ renderMode = "live", googleMapsKey }: HomeFee
         reportedAt: cheapest.reportedAt,
         distanceMeters: distM,
         verified: cheapest.verified,
+        verificationType: cheapest.verificationType,
       })
     }
 
     // Cheapest-first so StockX-ish clarity feels good.
     return out
-      .sort((a, b) => a.price - b.price)
+      .sort((a, b) => {
+        const priceCmp = a.price - b.price
+        if (priceCmp !== 0) return priceCmp
+        const affinityA = storeAffinityByStoreId[a.store.id] ?? 0
+        const affinityB = storeAffinityByStoreId[b.store.id] ?? 0
+        if (affinityA !== affinityB) return affinityB - affinityA
+        return a.distanceMeters - b.distanceMeters
+      })
       .slice(0, 6)
-  }, [cheapestByStoreId, itemsById, stores, userDistanceByStoreId, userLocation, nearbyCategory])
+  }, [cheapestByStoreId, itemsById, stores, userDistanceByStoreId, userLocation, nearbyCategory, storeAffinityByStoreId])
+
+  const recommendedItemIdSet = React.useMemo(() => new Set(recommendedItems.map((r) => r.item_id)), [recommendedItems])
+  const recommendedHotWins = React.useMemo(() => {
+    if (recommendedItemIdSet.size === 0) return []
+    return hotWins.filter((d) => (d.item?.id ? recommendedItemIdSet.has(d.item.id) : false))
+  }, [hotWins, recommendedItemIdSet])
+
+  const hotWinsPrioritized = React.useMemo(() => {
+    if (recommendedItemIdSet.size === 0) return hotWins
+    const recommendedSet = new Set(recommendedHotWins.map((d) => (d.item?.id ? d.item.id : "")))
+    const recommended = recommendedHotWins
+    const others = hotWins.filter((d) => {
+      const id = d.item?.id
+      if (!id) return true
+      return !recommendedSet.has(id)
+    })
+    return [...recommended, ...others]
+  }, [hotWins, recommendedHotWins, recommendedItemIdSet])
+
+  const trackedRetailers = React.useMemo(() => {
+    const counts = new Map<string, number>()
+    for (const s of stores) {
+      const price = cheapestByStoreId[s.id]?.price
+      if (typeof price !== "number" || !Number.isFinite(price)) continue
+      counts.set(s.name, (counts.get(s.name) ?? 0) + 1)
+    }
+    return Array.from(counts.entries())
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 8)
+      .map(([name]) => name)
+  }, [stores, cheapestByStoreId])
 
   const hotWinStoreIds = React.useMemo(() => new Set(hotWins.map((d) => d.store.id)), [hotWins])
 
@@ -518,6 +911,72 @@ export default function HomeFeed({ renderMode = "live", googleMapsKey }: HomeFee
     }
     return out
   }, [recentVerified])
+
+  if (true) {
+    const recentVerifiedForUI = recentVerified.map((r) => ({
+      store_id: r.store_id,
+      item_id: r.item_id,
+      best_price: r.price,
+      best_observed_at: r.reported_at,
+      is_stale: !r.verified,
+    }))
+
+    return (
+      <PremiumHomeUI
+        isLive={isLive}
+        loading={loading}
+        locationLabel={locationLabel}
+        locationMode={locationMode}
+        onSetLocationMode={(m) => setLocationMode(m)}
+        manualLocationInput={manualLocationInput}
+        onSetManualLocationInput={(v) => setManualLocationInput(v)}
+        locationError={locationError}
+        onResolveManualLocation={() => void resolveManualLocation()}
+
+        searchQuery={searchQuery}
+        onSetSearchQuery={(v) => setSearchQuery(v)}
+        searchLoading={searchLoading}
+        searchOffers={searchOffers}
+        recentSearchInsight={recentSearchInsight}
+        recentChipsForUI={recentSearches}
+        onSearchExact={(query) => {
+          void runExactSearch(query)
+        }}
+        onQuickAction={onQuickAction}
+        onRecentTap={(q) => {
+          void runExactSearch(q)
+        }}
+
+        canRenderMap={canRenderMap}
+        googleMapsKey={googleMapsKey ?? ""}
+        userLocation={userLocation}
+        stores={stores}
+        itemsById={itemsById}
+        cheapestByStoreId={cheapestByStoreId}
+        hotWinsPrioritized={hotWinsPrioritized}
+        recommendedHotWins={recommendedHotWins}
+        recentVerified={recentVerifiedForUI}
+        nearbyCategory={nearbyCategory}
+        nearbyPlaces={nearbyPlaces}
+        nearbyPlacesLoading={nearbyPlacesLoading}
+        gasPrices={null}
+        gasPricesLoading={false}
+        gasPricesError={"Gas intel is not enabled yet."}
+
+        retailerFilter={retailerFilter}
+        onSetRetailerFilter={(v) => setRetailerFilter(v)}
+        mapExpanded={mapExpanded}
+        onSetMapExpanded={(v) => setMapExpanded(v)}
+        trackedRetailers={trackedRetailers}
+
+        userId={userId}
+        recommendedItems={recommendedItems}
+        preferencesLoading={preferencesLoading}
+        onDealTapRaid={onDealTapRaid}
+        onSignUp={onSignUp}
+      />
+    )
+  }
 
   return (
     <div className="min-h-screen pb-28">
@@ -699,7 +1158,7 @@ export default function HomeFeed({ renderMode = "live", googleMapsKey }: HomeFee
               <div className="text-xs text-muted-foreground">Verified deals that are actually cheap</div>
               <div className="text-xs text-muted-foreground">
                 {closestVerifiedDeal
-                  ? `Closest verified: ${formatDistance(closestVerifiedDeal.distanceMeters)} • $${closestVerifiedDeal.price.toFixed(2)}`
+                  ? `Closest verified: ${formatDistance(closestVerifiedDeal!.distanceMeters)} • $${closestVerifiedDeal!.price.toFixed(2)}`
                   : "Closest verified: —"}
               </div>
             </div>

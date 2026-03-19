@@ -30,7 +30,14 @@ export type NormalizedPriceCandidate = {
   storeId?: string
   itemId?: string
   // If IDs aren’t known yet, adapters can supply text/geo to resolve.
-  store?: { name?: string; address?: string; lat?: number; lng?: number }
+  store?: {
+    name?: string
+    address?: string
+    lat?: number
+    lng?: number
+    // Optional provider-provenance identifier used for provider-backed store upserts.
+    krogerLocationId?: string
+  }
   item?: { name?: string; category?: string; variants?: string[] }
 
   price: number

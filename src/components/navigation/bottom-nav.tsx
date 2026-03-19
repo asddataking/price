@@ -3,7 +3,7 @@
 import * as React from "react"
 import Link from "next/link"
 import { usePathname } from "next/navigation"
-import { Home, Map as MapIcon, Sparkles, Clock } from "lucide-react"
+import { Home, Clock } from "lucide-react"
 
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
@@ -16,8 +16,6 @@ type NavItem = {
 
 const navItems: NavItem[] = [
   { href: "/", label: "Home", icon: <Home className="size-6" /> },
-  { href: "/raids", label: "Raids", icon: <Sparkles className="size-6" /> },
-  { href: "/map", label: "Map", icon: <MapIcon className="size-6" /> },
   { href: "/activity", label: "Activity", icon: <Clock className="size-6" /> },
 ]
 
